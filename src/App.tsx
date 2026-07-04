@@ -1,13 +1,22 @@
-import { FormEvent, useMemo, useState } from "react";
-import { getIndustryBenchmark, getMonteCarlo, getValuation } from "./api";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  getIndustryBenchmark,
+  getMeanReversionOverview,
+  getMonteCarlo,
+  getValuation,
+} from "./api";
 import type {
+  BankMeanReversionOverview,
+  BankMeanReversionRow,
   IndustryBenchmark,
   MonteCarloResult,
   ScenarioName,
   ValuationResult,
 } from "./types";
 
-type Page = "overview" | "details" | "scenarios" | "methods";
+type Page = "overview" | "reversion" | "details" | "scenarios" | "methods";
+type UiTheme = "calm" | "fintech" | "terminal" | "research";
+type ReversionMode = "reversion" | "income";
 
 const SCENARIO_META: Record<
   ScenarioName,
@@ -25,8 +34,34 @@ const SCENARIO_META: Record<
 
 // Ordered by broad market attention and liquidity, then by regional-bank coverage.
 const BANK_OPTIONS = [
-  ["600036", "招商银行"], ["601398", "工商银行"], ["601939", "建设银行"], ["601288", "农业银行"], ["601988", "中国银行"], ["601166", "兴业银行"], ["000001", "平安银行"], ["601328", "交通银行"], ["601818", "光大银行"], ["601998", "中信银行"], ["600000", "浦发银行"], ["600016", "民生银行"], ["600015", "华夏银行"], ["002142", "宁波银行"], ["601169", "北京银行"], ["601229", "上海银行"], ["601009", "南京银行"], ["601838", "成都银行"], ["601577", "长沙银行"], ["601963", "重庆银行"], ["002966", "苏州银行"], ["002948", "青岛银行"], ["601128", "常熟银行"], ["603323", "苏农银行"], ["002807", "江阴银行"], ["002839", "张家港行"], ["002958", "青农商行"],
+  ["600036", "招商银行"], ["601398", "工商银行"], ["601939", "建设银行"], ["601288", "农业银行"], ["601988", "中国银行"], ["601658", "邮储银行"], ["601328", "交通银行"],
+  ["601166", "兴业银行"], ["000001", "平安银行"], ["601818", "光大银行"], ["601998", "中信银行"], ["600000", "浦发银行"], ["600016", "民生银行"], ["600015", "华夏银行"], ["601916", "浙商银行"],
+  ["002142", "宁波银行"], ["601169", "北京银行"], ["601229", "上海银行"], ["600919", "江苏银行"], ["600926", "杭州银行"], ["601009", "南京银行"], ["601838", "成都银行"], ["601577", "长沙银行"], ["601997", "贵阳银行"], ["601963", "重庆银行"],
+  ["601825", "上海农商银行"], ["601077", "渝农商行"], ["600928", "西安银行"], ["601665", "齐鲁银行"], ["601187", "厦门银行"], ["601860", "紫金银行"], ["601528", "瑞丰银行"], ["600908", "无锡银行"], ["001227", "兰州银行"], ["002936", "郑州银行"],
+  ["002966", "苏州银行"], ["002948", "青岛银行"], ["601128", "常熟银行"], ["603323", "苏农银行"], ["002807", "江阴银行"], ["002839", "张家港行"], ["002958", "青农商行"],
 ] as const;
+
+const formatBankOption = (bankCode: string) => {
+  const normalized = bankCode.includes(".") ? bankCode.split(".")[1] : bankCode;
+  const option = BANK_OPTIONS.find(([code]) => code === normalized);
+  return option ? `${option[0]} · ${option[1]}` : normalized;
+};
+
+const resolveBankCode = (input: string, fallback: string) => {
+  const text = input.trim();
+  if (!text) return fallback;
+  const digitMatch = text.match(/\d{6}/);
+  if (digitMatch) return digitMatch[0];
+  const compact = text.replace(/\s/g, "");
+  const exact = BANK_OPTIONS.find(
+    ([code, name]) => name === text || `${code}·${name}` === compact,
+  );
+  if (exact) return exact[0];
+  const partial = BANK_OPTIONS.find(
+    ([code, name]) => code.includes(text) || name.includes(text),
+  );
+  return partial?.[0] ?? fallback;
+};
 
 const RATING: Record<
   ValuationResult["final_rating"],
@@ -59,13 +94,68 @@ const RATING: Record<
   },
 };
 
+const REVERSION_STATUS: Record<
+  BankMeanReversionRow["status"],
+  { label: string; tone: string }
+> = {
+  high_conviction_reversion: { label: "高确定性回归", tone: "mint" },
+  undervalued_watch: { label: "低估观察", tone: "peach" },
+  fair_value: { label: "估值中性", tone: "lavender" },
+  risk_discount: { label: "风险型低估", tone: "rose" },
+  overvalued: { label: "估值偏高", tone: "gray" },
+};
+
+const INCOME_STATUS: Record<
+  BankMeanReversionRow["income_status"],
+  { label: string; tone: string }
+> = {
+  core_income: { label: "核心股息候选", tone: "mint" },
+  income_watch: { label: "股息观察", tone: "peach" },
+  yield_trap_risk: { label: "高息陷阱", tone: "rose" },
+  not_income_candidate: { label: "非股息候选", tone: "gray" },
+};
+
+const BUY_WAIT_STATUS: Record<
+  ValuationResult["defensive_decision"]["buy_wait_status"],
+  { label: string; tone: string }
+> = {
+  reached: { label: "已到等待区", tone: "green" },
+  near: { label: "接近等待区", tone: "yellow" },
+  wait: { label: "继续等待", tone: "yellow" },
+  avoid: { label: "先避开", tone: "red" },
+};
+
+const RISK_LIGHT: Record<
+  ValuationResult["defensive_decision"]["risk_light"],
+  { label: string; tone: string }
+> = {
+  green: { label: "绿灯", tone: "green" },
+  yellow: { label: "黄灯", tone: "yellow" },
+  red: { label: "红灯", tone: "red" },
+};
+
 const money = (value: number | null) =>
   value === null ? "—" : `¥${value.toFixed(2)}`;
 const pct = (value: number) =>
   `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
 const purePct = (value: number) => `${(value * 100).toFixed(1)}%`;
+const maybePct = (value: number | null) =>
+  value === null ? "—" : purePct(value);
 const dayPct = (value: number | null) =>
   value === null ? "—" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
+const THEME_META: Record<UiTheme, { label: string; title: string }> = {
+  calm: { label: "经典", title: "给数字一处安静的栖身地。" },
+  fintech: { label: "科技粒子", title: "银行估值与回归信号台" },
+  terminal: { label: "量化终端", title: "BANK SIGNAL TERMINAL" },
+  research: { label: "投研白板", title: "银行估值工作台" },
+};
+
+const initialTheme = (): UiTheme => {
+  const saved = localStorage.getItem("bank-valuation-ui-theme");
+  return saved === "fintech" || saved === "terminal" || saved === "research"
+    ? saved
+    : "calm";
+};
 const localToday = () => {
   const now = new Date();
   const offset = now.getTimezoneOffset() * 60_000;
@@ -129,6 +219,80 @@ function PriceBand({ result }: { result: ValuationResult }) {
       <div className="current-pin" style={{ left: x(result.current_price) }}>
         <span>当前</span>
         <b>{money(result.current_price)}</b>
+      </div>
+    </section>
+  );
+}
+
+function DefensiveDecisionPanel({ result }: { result: ValuationResult }) {
+  const decision = result.defensive_decision;
+  const waitStatus = BUY_WAIT_STATUS[decision.buy_wait_status];
+  const light = RISK_LIGHT[decision.risk_light];
+  const waitTooltip = "等待价是按基准情景下沿、PB-ROE合理价、剩余收益价和股息托底综合后，再扣安全边际得到的保守观察价。";
+  const statusTooltip: Record<ValuationResult["defensive_decision"]["buy_wait_status"], string> = {
+    reached: "现价低于等待价，不代表必须买入，还要看红绿灯和压力测试是否可接受。",
+    near: "现价离等待价很近，可以进入重点观察，但最好继续要求风险信号不恶化。",
+    wait: "现价离保守等待价还有距离，模型建议等更高安全边际。",
+    avoid: "风险灯或基本面风险偏高，等待价只作为参考，不建议只因便宜行动。",
+  };
+  const stressTooltip = "压力测试价格不是目标价，而是把分红、悲观情景、危机情景分别压低后，看当前价还有多少缓冲。";
+  const trafficTooltip = "红绿灯优先看经营风险、风险标签、资产质量、资本和压力下行。绿灯偏干净，黄灯需安全边际，红灯先排除风险。";
+  return (
+    <section className="card defensive-panel">
+      <div className="section-heading">
+        <div>
+          <span className="eyebrow">防守决策</span>
+          <h2>
+            等待价、压力测试和风险红绿灯
+            <span className="help-dot" data-tooltip="这块用于回答三个问题：什么价格再考虑、坏情景能扛多少、当前风险是否干净。">?</span>
+          </h2>
+        </div>
+        <span className={`traffic-pill has-tooltip ${light.tone}`} data-tooltip={trafficTooltip}>{decision.risk_light_label}</span>
+      </div>
+      <div className="defensive-grid">
+        <article className={`buy-wait-card ${waitStatus.tone}`}>
+          <span>
+            买入等待价
+            <i className="help-dot" data-tooltip={waitTooltip}>?</i>
+          </span>
+          <b>{money(decision.buy_wait_price)}</b>
+          <em className="has-tooltip" data-tooltip={statusTooltip[decision.buy_wait_status]}>{waitStatus.label}</em>
+          <small>距当前 {pct(decision.buy_wait_gap)}</small>
+          <p>{decision.buy_wait_reason}</p>
+        </article>
+        <article className="stress-card">
+          <span>
+            压力测试
+            <i className="help-dot" data-tooltip={stressTooltip}>?</i>
+          </span>
+          <div className="stress-list">
+            {decision.stress_tests.map((item) => (
+              <div className={`has-tooltip ${item.severity}`} key={item.name} data-tooltip={item.note}>
+                <i />
+                <strong>{item.name}</strong>
+                <b>{money(item.stressed_price)}</b>
+                <small>{item.downside === null ? "—" : pct(item.downside)}</small>
+              </div>
+            ))}
+          </div>
+        </article>
+        <article className={`traffic-card ${light.tone}`}>
+          <span>
+            风险红绿灯
+            <i className="help-dot" data-tooltip={trafficTooltip}>?</i>
+          </span>
+          <div className="traffic-light">
+            <i className="red" />
+            <i className="yellow" />
+            <i className="green" />
+            <b className={light.tone}>{light.label}</b>
+          </div>
+          <ul>
+            {decision.risk_light_reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </article>
       </div>
     </section>
   );
@@ -766,6 +930,241 @@ function DetailsPage({ result }: { result: ValuationResult }) {
   );
 }
 
+function MeanReversionPage({
+  overview,
+  loading,
+  error,
+  onRefresh,
+  onSelectStock,
+}: {
+  overview: BankMeanReversionOverview | null;
+  loading: boolean;
+  error: string;
+  onRefresh: (forceRefresh?: boolean) => void;
+  onSelectStock: (stockCode: string) => void;
+}) {
+  const [mode, setMode] = useState<ReversionMode>("reversion");
+  const isIncomeMode = mode === "income";
+  const displayRows = useMemo(() => {
+    if (!overview) return [];
+    if (mode === "reversion") return overview.results;
+    const incomeOrder: Record<BankMeanReversionRow["income_status"], number> = {
+      core_income: 0,
+      income_watch: 1,
+      not_income_candidate: 2,
+      yield_trap_risk: 3,
+    };
+    return [...overview.results].sort(
+      (a, b) =>
+        incomeOrder[a.income_status] - incomeOrder[b.income_status] ||
+        b.income_candidate_score - a.income_candidate_score ||
+        b.dividend_safety_score - a.dividend_safety_score,
+    );
+  }, [mode, overview]);
+  const leaders = displayRows.slice(0, 3);
+  return (
+    <div className="reversion-page fade-in">
+      <div className="reversion-head">
+        <div>
+          <span className="eyebrow">
+            {isIncomeMode ? "BANK INCOME SAFETY" : "BANK MEAN REVERSION"}
+          </span>
+          <h1>{isIncomeMode ? "股息安全与稳定增长候选池" : "银行低估与均值回归排序"}</h1>
+          <p>
+            {overview?.as_of_date
+              ? `数据日期 ${overview.as_of_date}`
+              : "等待全银行样本返回"}
+          </p>
+        </div>
+        <div className="reversion-actions">
+          <div className="ranking-mode" role="tablist" aria-label="排序模式">
+            <button
+              type="button"
+              className={mode === "reversion" ? "active" : ""}
+              aria-selected={mode === "reversion"}
+              onClick={() => setMode("reversion")}
+            >
+              均值回归
+            </button>
+            <button
+              type="button"
+              className={mode === "income" ? "active" : ""}
+              aria-selected={mode === "income"}
+              onClick={() => setMode("income")}
+            >
+              股息低风险
+            </button>
+          </div>
+          <div className="ranking-tools">
+            <button className="refresh-button primary" type="button" onClick={() => onRefresh(false)} disabled={loading}>
+              {loading ? "汇总中…" : "更新排序"}
+            </button>
+            <button className="refresh-button" type="button" onClick={() => onRefresh(true)} disabled={loading}>
+              强制刷新
+            </button>
+          </div>
+        </div>
+      </div>
+      {error && (
+        <div className="error">
+          {error}
+          <span>请确认后端新接口已启动，并且 Baostock 网络可访问。</span>
+        </div>
+      )}
+      {loading && !overview && (
+        <div className="loading reversion-loading">
+          <span />
+          <span />
+          <span /> 正在逐家银行计算估值位置
+        </div>
+      )}
+      {overview && (
+        <>
+          <section className="reversion-summary">
+            <article>
+              <span>{isIncomeMode ? "高股息+低风险" : "候选银行"}</span>
+              <b>{isIncomeMode ? overview.income_candidate_count : overview.investable_count}</b>
+              <small>{isIncomeMode ? "股息安全与增长稳定优先" : "低估且未触发硬风险"}</small>
+            </article>
+            <article>
+              <span>{isIncomeMode ? "高息陷阱提示" : "风险型低估"}</span>
+              <b>{isIncomeMode ? overview.yield_trap_count : overview.risky_count}</b>
+              <small>{isIncomeMode ? "高股息但基本面需警惕" : "便宜但需先看经营风险"}</small>
+            </article>
+            <article>
+              <span>已排序样本</span>
+              <b>{overview.count}</b>
+              <small>失败 {overview.failed_count} 家</small>
+            </article>
+          </section>
+          {leaders.length > 0 && (
+            <section className="reversion-leaders">
+              {leaders.map((row, index) => (
+                <article key={row.stock_code}>
+                  <div className="leader-rank">#{isIncomeMode ? index + 1 : row.rank}</div>
+                  <div className={`bank-logo ${row.bank_profile.logo_tone}`}>
+                    {row.bank_profile.logo_text}
+                  </div>
+                  <div>
+                    <h2>{row.stock_name}</h2>
+                    <span>{row.stock_code}</span>
+                  </div>
+                  <b>
+                    {(isIncomeMode ? row.income_candidate_score : row.mean_reversion_score).toFixed(1)}
+                  </b>
+                  <small>
+                    {isIncomeMode
+                      ? INCOME_STATUS[row.income_status].label
+                      : REVERSION_STATUS[row.status].label}
+                  </small>
+                </article>
+              ))}
+            </section>
+          )}
+          <section className="card reversion-table-card">
+            <div className="section-heading">
+              <div>
+                <span className="eyebrow">{isIncomeMode ? "股息候选池" : "排序明细"}</span>
+                <h2>
+                  {isIncomeMode ? "用股息安全先过滤，再看稳定增长" : "便宜，但尽量不是坏掉的便宜"}
+                </h2>
+              </div>
+              <span className="pill">{isIncomeMode ? "income score 0–100" : "score 0–100"}</span>
+            </div>
+            <div className={`reversion-table ${isIncomeMode ? "income-table" : ""}`}>
+              <div className="reversion-table-head">
+                <span>银行</span>
+                <span>{isIncomeMode ? "股息状态" : "状态"}</span>
+                <span>{isIncomeMode ? "候选分" : "回归分"}</span>
+                <span>{isIncomeMode ? "股息安全" : "5年PB分位"}</span>
+                <span>{isIncomeMode ? "稳定增长" : "均值空间"}</span>
+                <span>{isIncomeMode ? "股息质量" : "基本面"}</span>
+                <span>动作</span>
+              </div>
+              {displayRows.map((row, index) => {
+                const status = isIncomeMode
+                  ? INCOME_STATUS[row.income_status]
+                  : REVERSION_STATUS[row.status];
+                const rowTags = isIncomeMode ? row.income_tags : row.tags;
+                return (
+                  <article className={`reversion-row ${status.tone}`} key={row.stock_code}>
+                    <div className="row-bank">
+                      <b>#{isIncomeMode ? index + 1 : row.rank}</b>
+                      <div>
+                        <strong>{row.stock_name}</strong>
+                        <span>{row.stock_code} · PB {row.current_pb.toFixed(2)}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <em className={`status-badge ${status.tone}`}>
+                        {status.label}
+                      </em>
+                      <small>
+                        {isIncomeMode
+                          ? `${purePct(row.dividend_yield)} 股息率`
+                          : `${purePct(row.reversion_probability)} 回归概率`}
+                      </small>
+                    </div>
+                    <div className="score-cell">
+                      <b>
+                        {(isIncomeMode ? row.income_candidate_score : row.mean_reversion_score).toFixed(1)}
+                      </b>
+                      <i
+                        style={{
+                          width: `${isIncomeMode ? row.income_candidate_score : row.mean_reversion_score}%`,
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <strong>
+                        {isIncomeMode ? row.dividend_safety_score.toFixed(1) : purePct(row.pb_percentile_5y)}
+                      </strong>
+                      <small>
+                        {isIncomeMode ? `风险分 ${row.risk_score.toFixed(1)}` : `折价 ${pct(row.pb_discount_to_5y_median)}`}
+                      </small>
+                    </div>
+                    <div>
+                      <strong>
+                        {isIncomeMode ? row.stable_growth_score.toFixed(1) : pct(row.mean_reversion_upside)}
+                      </strong>
+                      <small>
+                        {isIncomeMode ? `利润 ${pct(row.profit_growth_yoy)}` : `安全边际 ${pct(row.margin_of_safety)}`}
+                      </small>
+                    </div>
+                    <div className="fundamental-cell">
+                      <span>ROE {purePct(row.roe)}</span>
+                      <span>股息 {purePct(row.dividend_yield)}</span>
+                      <span>不良 {maybePct(row.npl_ratio)}</span>
+                      <span>{isIncomeMode ? `拨备 ${maybePct(row.provision_coverage)}` : `CET1 ${maybePct(row.cet1_ratio)}`}</span>
+                    </div>
+                    <button type="button" onClick={() => onSelectStock(row.stock_code)}>
+                      查看
+                    </button>
+                    <p>{row.thesis}</p>
+                    <div className="reversion-tags">
+                      {rowTags.map((tag) => (
+                        <span key={tag}>{tag}</span>
+                      ))}
+                    </div>
+                    {row.risk_flags.length > 0 && (
+                      <div className="row-risk-flags">
+                        {row.risk_flags.map((flag) => (
+                          <i key={flag}>{flag}</i>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+            <p className="industry-note">{overview.data_note}</p>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
 function EmptyState() {
   return (
     <div className="empty-state fade-in">
@@ -779,37 +1178,147 @@ function EmptyState() {
   );
 }
 
+function BankSearchBox({
+  value,
+  selectedCode,
+  onValueChange,
+  onSelect,
+}: {
+  value: string;
+  selectedCode: string;
+  onValueChange: (value: string) => void;
+  onSelect: (code: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const keyword = value.trim().toLowerCase().replace(/\s/g, "");
+  const matches = useMemo(() => {
+    const filtered = keyword
+      ? BANK_OPTIONS.filter(([code, name]) =>
+          `${code}${name}`.toLowerCase().includes(keyword),
+        )
+      : BANK_OPTIONS;
+    return filtered.slice(0, 10);
+  }, [keyword]);
+  const choose = (bankCode: string) => {
+    onSelect(bankCode);
+    onValueChange(formatBankOption(bankCode));
+    setOpen(false);
+  };
+  return (
+    <div className="bank-search">
+      <input
+        value={value}
+        onChange={(event) => {
+          const nextValue = event.target.value;
+          onValueChange(nextValue);
+          setOpen(true);
+          const resolved = resolveBankCode(nextValue, selectedCode);
+          if (/\d{6}/.test(nextValue) && resolved !== selectedCode) {
+            onSelect(resolved);
+          }
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && open && matches.length > 0) {
+            event.preventDefault();
+            choose(matches[0][0]);
+          }
+          if (event.key === "Escape") {
+            setOpen(false);
+          }
+        }}
+        placeholder="输入代码或银行名"
+        aria-label="搜索银行"
+        autoComplete="off"
+      />
+      <button type="button" aria-label="展开银行列表" onClick={() => setOpen((current) => !current)}>
+        ▾
+      </button>
+      {open && (
+        <div className="bank-search-menu">
+          {matches.length > 0 ? (
+            matches.map(([bankCode, name]) => (
+              <button
+                type="button"
+                className={bankCode === selectedCode ? "active" : ""}
+                key={bankCode}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => choose(bankCode)}
+              >
+                <span>{bankCode}</span>
+                <b>{name}</b>
+              </button>
+            ))
+          ) : (
+            <p>没有匹配的银行</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
+  const [theme, setTheme] = useState<UiTheme>(initialTheme);
   const [page, setPage] = useState<Page>("overview");
   const [code, setCode] = useState("601398");
+  const [bankSearch, setBankSearch] = useState(formatBankOption("601398"));
   const [date, setDate] = useState(localToday);
   const [result, setResult] = useState<ValuationResult | null>(null);
   const [monte, setMonte] = useState<MonteCarloResult | null>(null);
   const [benchmark, setBenchmark] = useState<IndustryBenchmark | null>(null);
   const [benchmarkLoading, setBenchmarkLoading] = useState(false);
+  const [reversion, setReversion] = useState<BankMeanReversionOverview | null>(null);
+  const [reversionLoading, setReversionLoading] = useState(false);
+  const [reversionError, setReversionError] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const rating = result ? RATING[result.final_rating] : null;
   const marketDateLagged = Boolean(result?.market_date && date && result.market_date < date);
   const visiblePage = useMemo(
-    () => (result ? page : "overview"),
+    () => (result || page === "reversion" || page === "methods" ? page : "overview"),
     [page, result],
   );
 
-  async function runAnalysis(forceRefresh = false) {
+  useEffect(() => {
+    if (visiblePage === "reversion" && !reversion && !reversionLoading) {
+      void loadMeanReversion(false);
+    }
+  }, [visiblePage]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("bank-valuation-ui-theme", theme);
+  }, [theme]);
+
+  async function loadMeanReversion(forceRefresh = false) {
+    setReversionLoading(true);
+    setReversionError("");
+    try {
+      const overview = await getMeanReversionOverview(date, forceRefresh, true);
+      setReversion(overview);
+    } catch (err) {
+      setReversionError(err instanceof Error ? err.message : "暂时无法连接全银行排序服务");
+    } finally {
+      setReversionLoading(false);
+    }
+  }
+
+  async function runAnalysis(forceRefresh = false, targetCode = code) {
     setLoading(true);
     setError("");
     setPage("overview");
     try {
       // Baostock keeps process-global socket state. Request sequentially so a
       // valuation run is not interrupted by Monte Carlo opening another session.
-      const valuation = await getValuation(code, date, forceRefresh);
+      const valuation = await getValuation(targetCode, date, forceRefresh);
       setResult(valuation);
-      const simulation = await getMonteCarlo(code, date, forceRefresh);
+      const simulation = await getMonteCarlo(targetCode, date, forceRefresh);
       setMonte(simulation);
       setBenchmark(null);
       setBenchmarkLoading(true);
-      void getIndustryBenchmark(code, date, forceRefresh)
+      void getIndustryBenchmark(targetCode, date, forceRefresh)
         .then(setBenchmark)
         .catch((industryError) =>
           console.warn(
@@ -831,7 +1340,17 @@ export default function App() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    await runAnalysis(false);
+    const resolvedCode = resolveBankCode(bankSearch, code);
+    setCode(resolvedCode);
+    setBankSearch(formatBankOption(resolvedCode));
+    await runAnalysis(false, resolvedCode);
+  }
+
+  function selectReversionStock(stockCode: string) {
+    const plainCode = stockCode.includes(".") ? stockCode.split(".")[1] : stockCode;
+    setCode(plainCode);
+    setBankSearch(formatBankOption(plainCode));
+    void runAnalysis(false, plainCode);
   }
 
   return (
@@ -848,45 +1367,69 @@ export default function App() {
         <nav>
           {(
             [
-              ["overview", "概览"],
-              ["details", "数据全景"],
-              ["scenarios", "情景推演"],
-              ["methods", "模型说明"],
-            ] as [Page, string][]
-          ).map(([key, label]) => (
-            <button
-              className={visiblePage === key ? "active" : ""}
-              onClick={() => setPage(key)}
-              key={key}
-            >
-              {key === "overview"
-                ? "◌"
-                : key === "details"
-                  ? "▤"
-                  : key === "scenarios"
-                    ? "◇"
-                    : "⌁"}
-              <span>{label}</span>
-            </button>
-          ))}
+              ["overview", "概览", false],
+              ["reversion", "银行排序", false],
+              ["details", "数据全景", true],
+              ["scenarios", "情景推演", true],
+              ["methods", "模型说明", false],
+            ] as [Page, string, boolean][]
+          ).map(([key, label, requiresResult]) => {
+            const disabled = requiresResult && !result;
+            return (
+              <button
+                className={`${visiblePage === key ? "active" : ""} ${disabled ? "disabled" : ""}`}
+                onClick={() => !disabled && setPage(key)}
+                disabled={disabled}
+                title={disabled ? "先选择银行并开始分析" : label}
+                key={key}
+              >
+                {key === "overview"
+                  ? "◌"
+                  : key === "reversion"
+                    ? "▦"
+                  : key === "details"
+                    ? "▤"
+                    : key === "scenarios"
+                      ? "◇"
+                      : "⌁"}
+                <span>{label}</span>
+              </button>
+            );
+          })}
         </nav>
         <div className="sidebar-foot">
-          <span>估值分析工具</span>
-          <small>不构成投资建议</small>
+          <div className="theme-panel">
+            <span>外观</span>
+            <div className="theme-switch">
+              {(Object.entries(THEME_META) as [UiTheme, { label: string; title: string }][]).map(([key, meta]) => (
+                <button
+                  type="button"
+                  className={theme === key ? "active" : ""}
+                  onClick={() => setTheme(key)}
+                  key={key}
+                >
+                  {meta.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </aside>
       <div className="content">
         <header>
           <div>
             <span className="eyebrow">A-SHARE BANK VALUATION</span>
-            <h1>给数字一处安静的栖身地。</h1>
+            <h1>{THEME_META[theme].title}</h1>
           </div>
           <form onSubmit={submit}>
             <label>
               股票代码
-              <select value={code} onChange={(e) => setCode(e.target.value)} aria-label="选择银行">
-                {BANK_OPTIONS.map(([bankCode, name]) => <option key={bankCode} value={bankCode}>{bankCode} · {name}</option>)}
-              </select>
+              <BankSearchBox
+                value={bankSearch}
+                selectedCode={code}
+                onValueChange={setBankSearch}
+                onSelect={setCode}
+              />
             </label>
             <label>
               估值日期
@@ -921,13 +1464,22 @@ export default function App() {
             </button>
           </div>
         )}
-        {!result && !loading && !error && <EmptyState />}
+        {!result && !loading && !error && visiblePage !== "reversion" && <EmptyState />}
         {loading && (
           <div className="loading">
             <span />
             <span />
             <span /> 正在整理市场、财报与分红数据
           </div>
+        )}
+        {visiblePage === "reversion" && (
+          <MeanReversionPage
+            overview={reversion}
+            loading={reversionLoading}
+            error={reversionError}
+            onRefresh={(forceRefresh = false) => void loadMeanReversion(forceRefresh)}
+            onSelectStock={selectReversionStock}
+          />
         )}
         {result && visiblePage === "overview" && (
           <div className="overview fade-in">
@@ -1003,6 +1555,7 @@ export default function App() {
                 <small>基于 5 年预测与终值</small>
               </article>
             </section>
+            <DefensiveDecisionPanel result={result} />
             <PriceBand result={result} />
             <section className="lower-grid">
               {monte && <MonteChart data={monte} />}

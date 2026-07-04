@@ -62,6 +62,22 @@ export interface ValuationResult {
     }>;
     market_conditions: string[];
   };
+  defensive_decision: {
+    buy_wait_price: number;
+    buy_wait_gap: number;
+    buy_wait_status: "reached" | "near" | "wait" | "avoid";
+    buy_wait_reason: string;
+    risk_light: "green" | "yellow" | "red";
+    risk_light_label: string;
+    risk_light_reasons: string[];
+    stress_tests: Array<{
+      name: string;
+      stressed_price: number | null;
+      downside: number | null;
+      severity: "green" | "yellow" | "red";
+      note: string;
+    }>;
+  };
   final_rating: "deep_value" | "watch" | "hold_income" | "value_trap_risk" | "avoid";
 }
 
@@ -91,5 +107,63 @@ export interface IndustryBenchmark {
   as_of_date: string;
   sample_size: number;
   metrics: Record<string, IndustryMetric>;
+  data_note: string;
+}
+
+export interface BankMeanReversionRow {
+  rank: number;
+  stock_code: string;
+  stock_name: string;
+  bank_profile: ValuationResult["bank_profile"];
+  market_date: string | null;
+  current_price: number;
+  current_pb: number;
+  pb_percentile_5y: number;
+  pb_discount_to_5y_median: number;
+  mean_reversion_upside: number;
+  upside_potential: number;
+  margin_of_safety: number;
+  dividend_yield: number;
+  roe: number;
+  profit_growth_yoy: number;
+  npl_ratio: number | null;
+  provision_coverage: number | null;
+  cet1_ratio: number | null;
+  quality_score: number;
+  risk_score: number;
+  mean_reversion_score: number;
+  reversion_probability: number;
+  dividend_safety_score: number;
+  stable_growth_score: number;
+  income_candidate_score: number;
+  status:
+    | "high_conviction_reversion"
+    | "undervalued_watch"
+    | "fair_value"
+    | "risk_discount"
+    | "overvalued";
+  income_status:
+    | "core_income"
+    | "income_watch"
+    | "yield_trap_risk"
+    | "not_income_candidate";
+  tags: string[];
+  income_tags: string[];
+  risk_flags: string[];
+  thesis: string;
+}
+
+export interface BankMeanReversionOverview {
+  module: string;
+  title: string;
+  as_of_date: string | null;
+  count: number;
+  investable_count: number;
+  risky_count: number;
+  income_candidate_count: number;
+  yield_trap_count: number;
+  failed_count: number;
+  results: BankMeanReversionRow[];
+  failures: Array<{ stock_code: string; error: string }>;
   data_note: string;
 }

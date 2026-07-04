@@ -1,4 +1,9 @@
-import type { IndustryBenchmark, MonteCarloResult, ValuationResult } from "./types";
+import type {
+  BankMeanReversionOverview,
+  IndustryBenchmark,
+  MonteCarloResult,
+  ValuationResult,
+} from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -34,5 +39,20 @@ export function getMonteCarlo(stock_code: string, valuation_date?: string, refre
 export function getIndustryBenchmark(stock_code: string, valuation_date?: string, refresh_cache = false) {
   return request<IndustryBenchmark>("/api/bank/industry-benchmark", {
     method: "POST", body: JSON.stringify({ stock_code, valuation_date: valuation_date || null, refresh_cache }),
+  });
+}
+
+export function getMeanReversionOverview(
+  valuation_date?: string,
+  refresh_cache = false,
+  include_risky = true,
+) {
+  return request<BankMeanReversionOverview>("/api/bank/mean-reversion-overview", {
+    method: "POST",
+    body: JSON.stringify({
+      valuation_date: valuation_date || null,
+      refresh_cache,
+      include_risky,
+    }),
   });
 }
