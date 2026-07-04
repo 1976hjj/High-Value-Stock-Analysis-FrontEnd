@@ -3,18 +3,23 @@ import {
   getIndustryBenchmark,
   getMeanReversionOverview,
   getMonteCarlo,
+  getStrategyBacktest,
   getValuation,
 } from "./api";
 import type {
+  BacktestStrategyId,
   BankMeanReversionOverview,
   BankMeanReversionRow,
   IndustryBenchmark,
   MonteCarloResult,
   ScenarioName,
+  StrategyBacktestQuery,
+  StrategyBacktestResponse,
+  StrategyBacktestResult,
   ValuationResult,
 } from "./types";
 
-type Page = "overview" | "reversion" | "details" | "scenarios" | "methods";
+type Page = "overview" | "reversion" | "backtest" | "details" | "scenarios" | "methods";
 type UiTheme = "calm" | "fintech" | "terminal" | "research";
 type ReversionMode = "reversion" | "income";
 
@@ -40,6 +45,13 @@ const BANK_OPTIONS = [
   ["601825", "上海农商银行"], ["601077", "渝农商行"], ["600928", "西安银行"], ["601665", "齐鲁银行"], ["601187", "厦门银行"], ["601860", "紫金银行"], ["601528", "瑞丰银行"], ["600908", "无锡银行"], ["001227", "兰州银行"], ["002936", "郑州银行"],
   ["002966", "苏州银行"], ["002948", "青岛银行"], ["601128", "常熟银行"], ["603323", "苏农银行"], ["002807", "江阴银行"], ["002839", "张家港行"], ["002958", "青农商行"],
 ] as const;
+
+const BANK_LOGO_CODES = new Set([
+  "000001", "002142", "002958", "002966", "600000", "600015", "600016", "600036",
+  "600919", "601009", "601077", "601166", "601169", "601288", "601328", "601398",
+  "601528", "601577", "601658", "601665", "601818", "601825", "601916", "601939",
+  "601963", "601988", "601997", "601998", "603323",
+]);
 
 const formatBankOption = (bankCode: string) => {
   const normalized = bankCode.includes(".") ? bankCode.split(".")[1] : bankCode;
@@ -143,8 +155,10 @@ const maybePct = (value: number | null) =>
   value === null ? "—" : purePct(value);
 const dayPct = (value: number | null) =>
   value === null ? "—" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
+const recoveryText = (days: number | null, recoveryDate: string | null) =>
+  days === null ? "尚未修复" : `${days}天 · ${recoveryDate}`;
 const THEME_META: Record<UiTheme, { label: string; title: string }> = {
-  calm: { label: "经典", title: "给数字一处安静的栖身地。" },
+  calm: { label: "经典", title: "银行估值与股息筛选工作台" },
   fintech: { label: "科技粒子", title: "银行估值与回归信号台" },
   terminal: { label: "量化终端", title: "BANK SIGNAL TERMINAL" },
   research: { label: "投研白板", title: "银行估值工作台" },
@@ -161,6 +175,69 @@ const localToday = () => {
   const offset = now.getTimezoneOffset() * 60_000;
   return new Date(now.getTime() - offset).toISOString().slice(0, 10);
 };
+
+const DEFAULT_BACKTEST_QUERY: StrategyBacktestQuery = {
+  years: 10,
+  start_date: null,
+  end_date: null,
+  rebalance_frequency: "quarterly",
+  holding_count: 10,
+  min_dividend_yield: 0.03,
+  min_dividend_safety: 55,
+  min_stable_growth: 45,
+  max_risk_score: 45,
+  max_payout_ratio: 0.8,
+  dividend_weight: 0.25,
+  safety_weight: 0.25,
+  growth_weight: 0.2,
+  valuation_weight: 0.2,
+  risk_penalty_weight: 0.15,
+};
+
+const LOW_DRAWDOWN_BACKTEST_QUERY: StrategyBacktestQuery = {
+  ...DEFAULT_BACKTEST_QUERY,
+  holding_count: 8,
+  min_dividend_yield: 0.035,
+  min_dividend_safety: 65,
+  min_stable_growth: 55,
+  max_risk_score: 32,
+  max_payout_ratio: 0.7,
+  safety_weight: 0.3,
+  growth_weight: 0.25,
+  risk_penalty_weight: 0.25,
+  valuation_weight: 0.1,
+};
+
+const INCOME_PLUS_BACKTEST_QUERY: StrategyBacktestQuery = {
+  ...DEFAULT_BACKTEST_QUERY,
+  holding_count: 12,
+  min_dividend_yield: 0.04,
+  min_dividend_safety: 52,
+  min_stable_growth: 40,
+  max_risk_score: 48,
+  max_payout_ratio: 0.85,
+  dividend_weight: 0.35,
+  valuation_weight: 0.25,
+  risk_penalty_weight: 0.12,
+};
+
+const BACKTEST_PRESET_COMPARE_KEYS: Array<keyof StrategyBacktestQuery> = [
+  "years",
+  "start_date",
+  "end_date",
+  "rebalance_frequency",
+  "holding_count",
+  "min_dividend_yield",
+  "min_dividend_safety",
+  "min_stable_growth",
+  "max_risk_score",
+  "max_payout_ratio",
+  "dividend_weight",
+  "safety_weight",
+  "growth_weight",
+  "valuation_weight",
+  "risk_penalty_weight",
+];
 
 function Particles() {
   return (
@@ -477,8 +554,8 @@ function MethodPage() {
     <div className="method-page fade-in">
       <div className="page-intro">
         <span className="eyebrow">读数指南</span>
-        <h1>把复杂模型，放回一句人话。</h1>
-        <p>每一项指标都应与数据时点一起看，而不是独自宣告结论。</p>
+        <h1>先看风险，再看估值和股息。</h1>
+        <p>建议按红绿灯、压力价格、股息安全分、PB 分位和回测回撤顺序检查。</p>
       </div>
       <div className="method-grid">
         <article>
@@ -1042,9 +1119,11 @@ function MeanReversionPage({
               {leaders.map((row, index) => (
                 <article key={row.stock_code}>
                   <div className="leader-rank">#{isIncomeMode ? index + 1 : row.rank}</div>
-                  <div className={`bank-logo ${row.bank_profile.logo_tone}`}>
-                    {row.bank_profile.logo_text}
-                  </div>
+                  <BankLogo
+                    stockCode={row.stock_code}
+                    stockName={row.stock_name}
+                    profile={row.bank_profile}
+                  />
                   <div>
                     <h2>{row.stock_name}</h2>
                     <span>{row.stock_code}</span>
@@ -1169,10 +1248,10 @@ function EmptyState() {
   return (
     <div className="empty-state fade-in">
       <div className="empty-orb">⌁</div>
-      <span className="eyebrow">从一只银行开始</span>
-      <h1>输入代码，让数据自己长出轮廓。</h1>
+      <span className="eyebrow">开始分析</span>
+      <h1>输入股票代码，查看估值、股息和风险。</h1>
       <p>
-        只需填写股票代码和一个可选日期。我们会寻找当天或此前最近交易日，并自动整理估值所需的数据。
+        可输入代码或银行名称；选择日期后，系统会使用当天或此前最近交易日的数据。
       </p>
     </div>
   );
@@ -1259,6 +1338,364 @@ function BankSearchBox({
   );
 }
 
+function BankLogo({
+  stockCode,
+  stockName,
+  profile,
+}: {
+  stockCode: string;
+  stockName: string;
+  profile: ValuationResult["bank_profile"];
+}) {
+  const normalized = stockCode.includes(".") ? stockCode.split(".")[1] : stockCode;
+  const [failed, setFailed] = useState(false);
+  const hasLogo = BANK_LOGO_CODES.has(normalized);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [normalized]);
+
+  return (
+    <div className={`bank-logo ${failed || !hasLogo ? profile.logo_tone : "real"}`} aria-label={`${stockName} 标识`}>
+      {failed || !hasLogo ? (
+        profile.logo_text
+      ) : (
+        <img
+          src={`/bank-logos/${normalized}.png`}
+          alt={`${stockName} logo`}
+          onError={() => setFailed(true)}
+        />
+      )}
+    </div>
+  );
+}
+
+const BACKTEST_TONE: Record<BacktestStrategyId, string> = {
+  income_core: "mint",
+  value_reversion: "lavender",
+  defensive_rotation: "peach",
+};
+
+const BACKTEST_FREQUENCY_LABEL: Record<StrategyBacktestQuery["rebalance_frequency"], string> = {
+  monthly: "每月",
+  quarterly: "每季",
+  semiannual: "半年",
+  annual: "每年",
+};
+
+const BACKTEST_WEIGHT_FIELDS: Array<[
+  string,
+  "dividend_weight" | "safety_weight" | "growth_weight" | "valuation_weight" | "risk_penalty_weight",
+  string,
+]> = [
+  ["股息权重", "dividend_weight", "越高越偏向高股息率股票。想提高现金收益可上调；若担心高息陷阱，不要单独拉太高。"],
+  ["安全权重", "safety_weight", "越高越偏向分红覆盖、资本和资产质量更稳的银行。低回撤策略通常应提高这一项。"],
+  ["增长权重", "growth_weight", "越高越看重利润和经营稳定性。想避开利润下滑银行，可提高到 0.25-0.35。"],
+  ["低估权重", "valuation_weight", "越高越偏向 PB 历史低位和均值回归空间。想做估值修复可提高；想稳拿股息可适中。"],
+  ["风险惩罚", "risk_penalty_weight", "越高越严格压低风险高的银行。目标是低回撤时建议提高；收益进攻时可略降。"],
+];
+
+function ParamLabel({ label, tooltip }: { label: string; tooltip: string }) {
+  return (
+    <span className="param-label">
+      {label}
+      <i className="help-dot" data-tooltip={tooltip}>?</i>
+    </span>
+  );
+}
+
+function BacktestLineChart({
+  strategy,
+  mode,
+}: {
+  strategy: StrategyBacktestResult;
+  mode: "equity" | "drawdown";
+}) {
+  const points = mode === "equity" ? strategy.equity_curve : strategy.drawdown_curve;
+  const values = points.map((point) => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const y = (value: number) => 126 - ((value - min) / (max - min || 1)) * 100;
+  const x = (index: number) => 20 + (index / Math.max(points.length - 1, 1)) * 410;
+  const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${x(index).toFixed(2)},${y(point.value).toFixed(2)}`).join(" ");
+  const maxDrawdownIndex = mode === "drawdown"
+    ? points.findIndex((point) => point.date === strategy.metrics.max_drawdown_date)
+    : -1;
+  const maxDrawdownPoint = maxDrawdownIndex >= 0 ? points[maxDrawdownIndex] : null;
+  const markerX = maxDrawdownIndex >= 0 ? x(maxDrawdownIndex) : 0;
+  const markerY = maxDrawdownPoint ? y(maxDrawdownPoint.value) : 0;
+  return (
+    <svg className={`backtest-chart ${mode}`} viewBox="0 0 450 150" role="img" aria-label={`${strategy.strategy_name}${mode === "equity" ? "净值曲线" : "回撤曲线"}`}>
+      <line x1="20" y1="126" x2="430" y2="126" className="grid" />
+      <line x1="20" y1="76" x2="430" y2="76" className="grid" />
+      <path d={path} />
+      {maxDrawdownPoint && (
+        <g className="drawdown-marker">
+          <line x1={markerX} y1="18" x2={markerX} y2="126" />
+          <circle cx={markerX} cy={markerY} r="4.5" />
+          <text x={Math.min(Math.max(markerX, 64), 386)} y="28" textAnchor="middle">
+            最大回撤 {maxDrawdownPoint.date}
+          </text>
+        </g>
+      )}
+      <text x="20" y="144">{points[0]?.date.slice(0, 4)}</text>
+      <text x="430" y="144" textAnchor="end">{points.at(-1)?.date.slice(0, 4)}</text>
+    </svg>
+  );
+}
+
+function BacktestPage({
+  backtest,
+  loading,
+  error,
+  preparing,
+  query,
+  onQueryChange,
+  onRunWithQuery,
+  onRefresh,
+  onPrepare,
+}: {
+  backtest: StrategyBacktestResponse | null;
+  loading: boolean;
+  error: string;
+  preparing: boolean;
+  query: StrategyBacktestQuery;
+  onQueryChange: (query: StrategyBacktestQuery) => void;
+  onRunWithQuery: (query: StrategyBacktestQuery) => void;
+  onRefresh: () => void;
+  onPrepare: () => void;
+}) {
+  const [activeStrategy, setActiveStrategy] = useState<BacktestStrategyId>("income_core");
+  const active = backtest?.results.find((item) => item.strategy_id === activeStrategy) ?? backtest?.results[0] ?? null;
+  const updateQuery = <K extends keyof StrategyBacktestQuery,>(key: K, value: StrategyBacktestQuery[K]) => {
+    onQueryChange({ ...query, [key]: value });
+  };
+  const isPresetActive = (preset: StrategyBacktestQuery) => (
+    BACKTEST_PRESET_COMPARE_KEYS.every((key) => query[key] === preset[key])
+  );
+  const applyPreset = (preset: StrategyBacktestQuery) => {
+    onRunWithQuery(preset);
+  };
+  const runLabel = query.start_date || query.end_date
+    ? `${query.start_date || backtest?.start_date || "start"} 至 ${query.end_date || backtest?.end_date || "latest"}`
+    : `${query.years}年 · ${BACKTEST_FREQUENCY_LABEL[query.rebalance_frequency]}`;
+
+  return (
+    <div className="backtest-page fade-in">
+      <div className="reversion-head">
+        <div>
+          <span className="eyebrow">DIVIDEND STRATEGY BACKTEST</span>
+          <h1>高股息银行策略回测</h1>
+          <p>{backtest ? `${backtest.start_date} 至 ${backtest.end_date}` : "等待回测结果"}</p>
+        </div>
+        <div className="reversion-actions">
+          <button className="refresh-button" type="button" onClick={onPrepare} disabled={loading || preparing}>
+            {preparing ? "拉取中..." : "拉取缓存并重试"}
+          </button>
+          <button className="refresh-button primary" type="button" onClick={onRefresh} disabled={loading || preparing}>
+            {loading ? "回测中..." : "运行回测"}
+          </button>
+        </div>
+      </div>
+      <section className="card backtest-controls">
+        <div className="section-heading">
+          <div>
+            <span className="eyebrow">BACKTEST BUILDER</span>
+            <h2>自由组合策略参数</h2>
+          </div>
+          <div className="backtest-presets">
+            <button
+              type="button"
+              className={isPresetActive(LOW_DRAWDOWN_BACKTEST_QUERY) ? "active" : ""}
+              onClick={() => applyPreset(LOW_DRAWDOWN_BACKTEST_QUERY)}
+              disabled={loading || preparing}
+            >
+              低回撤预设
+            </button>
+            <button
+              type="button"
+              className={isPresetActive(INCOME_PLUS_BACKTEST_QUERY) ? "active" : ""}
+              onClick={() => applyPreset(INCOME_PLUS_BACKTEST_QUERY)}
+              disabled={loading || preparing}
+            >
+              股息增强
+            </button>
+            <button
+              type="button"
+              className={isPresetActive(DEFAULT_BACKTEST_QUERY) ? "active" : ""}
+              onClick={() => applyPreset(DEFAULT_BACKTEST_QUERY)}
+              disabled={loading || preparing}
+            >
+              默认
+            </button>
+          </div>
+        </div>
+        <div className="backtest-control-grid">
+          <label>
+            <ParamLabel label="开始日期" tooltip="回测起点。建议至少覆盖一轮完整牛熊周期；做 10 年稳定性测试时可从 2016 年附近开始。" />
+            <input type="date" value={query.start_date ?? ""} onChange={(event) => updateQuery("start_date", event.target.value || null)} />
+          </label>
+          <label>
+            <ParamLabel label="结束日期" tooltip="回测终点。通常用最新交易日；想检验某段行情，比如 2020-2022 或 2023-至今，可以手动截断。" />
+            <input type="date" value={query.end_date ?? ""} onChange={(event) => updateQuery("end_date", event.target.value || null)} />
+          </label>
+          <label>
+            <ParamLabel label="未选日期时年数" tooltip="开始/结束日期为空时使用最近 N 年。建议先看 10 年，再分别看 3 年、5 年，确认策略不是只适合某一段行情。" />
+            <input type="number" min={3} max={15} value={query.years} onChange={(event) => updateQuery("years", Number(event.target.value))} />
+          </label>
+          <label>
+            <ParamLabel label="调仓频率" tooltip="调仓越频繁越灵敏，但交易成本和换手也更高。银行股高股息策略通常先用每季；想更稳可试半年。" />
+            <select value={query.rebalance_frequency} onChange={(event) => updateQuery("rebalance_frequency", event.target.value as StrategyBacktestQuery["rebalance_frequency"])}>
+              <option value="monthly">每月</option>
+              <option value="quarterly">每季</option>
+              <option value="semiannual">半年</option>
+              <option value="annual">每年</option>
+            </select>
+          </label>
+          <label>
+            <ParamLabel label="持仓数量" tooltip="组合持有几只银行。数量少更集中、波动可能更大；8-12 只通常较平衡，低回撤可偏 10-15。" />
+            <input type="number" min={3} max={20} value={query.holding_count} onChange={(event) => updateQuery("holding_count", Number(event.target.value))} />
+          </label>
+          <label>
+            <ParamLabel label="最低股息率" tooltip="低于该股息率的银行会被排除。3%-4%适合稳健筛选；设太高容易只剩高息但基本面承压的股票。" />
+            <input type="number" min={0} max={20} step={0.1} value={(query.min_dividend_yield * 100).toFixed(1)} onChange={(event) => updateQuery("min_dividend_yield", Number(event.target.value) / 100)} />
+          </label>
+          <label>
+            <ParamLabel label="股息安全分" tooltip="衡量分红可持续性，越高越严格。追求低回撤可设 60-70；想扩大候选池可降到 50-55。" />
+            <input type="number" min={0} max={100} value={query.min_dividend_safety} onChange={(event) => updateQuery("min_dividend_safety", Number(event.target.value))} />
+          </label>
+          <label>
+            <ParamLabel label="稳定增长分" tooltip="衡量利润、ROE 等稳定程度。设高可避开利润转弱银行；如果市场整体承压，过高会导致候选不足。" />
+            <input type="number" min={0} max={100} value={query.min_stable_growth} onChange={(event) => updateQuery("min_stable_growth", Number(event.target.value))} />
+          </label>
+          <label>
+            <ParamLabel label="最高风险分" tooltip="风险分高于该值会被剔除。低回撤建议 30-40；如果想提高收益弹性，可放宽到 45-50 后观察回撤是否明显变差。" />
+            <input type="number" min={0} max={100} value={query.max_risk_score} onChange={(event) => updateQuery("max_risk_score", Number(event.target.value))} />
+          </label>
+          <label>
+            <ParamLabel label="派息率上限" tooltip="派息率过高说明利润对分红覆盖不足。稳健股息策略常用 70%-85%；超过 100%通常要谨慎。" />
+            <input type="number" min={0} max={150} step={1} value={(query.max_payout_ratio * 100).toFixed(0)} onChange={(event) => updateQuery("max_payout_ratio", Number(event.target.value) / 100)} />
+          </label>
+        </div>
+        <div className="weight-grid">
+          {BACKTEST_WEIGHT_FIELDS.map(([label, key, tooltip]) => (
+            <label key={key}>
+              <span>
+                <ParamLabel label={label} tooltip={tooltip} />
+                <b>{query[key].toFixed(2)}</b>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={query[key]}
+                onChange={(event) => updateQuery(key, Number(event.target.value))}
+              />
+            </label>
+          ))}
+        </div>
+      </section>
+      {error && (
+        <div className="error backtest-error">
+          {error}
+          <span>如果是缓存缺失，点击“拉取缓存并重试”会逐家刷新银行数据，完成后自动重新回测；如果提示无法连接后端，请先启动 8000 端口服务。</span>
+          <button type="button" onClick={onPrepare} disabled={loading || preparing}>
+            {preparing ? "正在拉取缓存..." : "拉取缓存并重试"}
+          </button>
+        </div>
+      )}
+      {loading && !backtest && (
+        <div className="loading reversion-loading">
+          <span /><span /><span /> 正在回测三套股息策略
+        </div>
+      )}
+      {backtest && (
+        <>
+          <section className="backtest-summary">
+            {backtest.results.map((strategy) => (
+              <button
+                type="button"
+                className={`${BACKTEST_TONE[strategy.strategy_id]} ${active?.strategy_id === strategy.strategy_id ? "active" : ""}`}
+                onClick={() => setActiveStrategy(strategy.strategy_id)}
+                key={strategy.strategy_id}
+              >
+                <span>{strategy.strategy_name}</span>
+                <b>{pct(strategy.metrics.annualized_return)}</b>
+                <small>最大回撤 {pct(strategy.metrics.max_drawdown)}</small>
+              </button>
+            ))}
+          </section>
+          {active && (
+            <>
+              <section className="card backtest-detail">
+                <div className="section-heading">
+                  <div>
+                    <span className="eyebrow">策略明细</span>
+                    <h2>{active.strategy_name}</h2>
+                  </div>
+                  <span className="pill">{runLabel}</span>
+                </div>
+                <p className="backtest-description">{active.description}</p>
+                <div className="backtest-metrics">
+                  <span>累计收益 <b>{pct(active.metrics.total_return)}</b></span>
+                  <span>年化收益 <b>{pct(active.metrics.annualized_return)}</b></span>
+                  <span>最大回撤 <b>{pct(active.metrics.max_drawdown)}</b></span>
+                  <span>回撤日期 <b>{active.metrics.max_drawdown_date}</b></span>
+                  <span>修复耗时 <b>{recoveryText(active.metrics.recovery_days, active.metrics.recovery_date)}</b></span>
+                  <span>夏普 <b>{active.metrics.sharpe?.toFixed(2) ?? "—"}</b></span>
+                  <span>胜率 <b>{purePct(active.metrics.win_year_rate)}</b></span>
+                  <span>年化股息贡献 <b>{purePct(active.metrics.annual_dividend_return)}</b></span>
+                </div>
+                <div className="backtest-charts">
+                  <div>
+                    <span>净值曲线</span>
+                    <BacktestLineChart strategy={active} mode="equity" />
+                  </div>
+                  <div>
+                    <span>回撤曲线</span>
+                    <BacktestLineChart strategy={active} mode="drawdown" />
+                  </div>
+                </div>
+              </section>
+              <section className="backtest-lower">
+                <div className="card yearly-card">
+                  <div className="section-heading">
+                    <h2>年度收益</h2>
+                  </div>
+                  <div className="yearly-grid">
+                    {active.yearly_returns.map((item) => (
+                      <span className={item.return_rate >= 0 ? "up" : "down"} key={item.year}>
+                        {item.year}<b>{pct(item.return_rate)}</b>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="card holdings-card">
+                  <div className="section-heading">
+                    <h2>当前组合</h2>
+                  </div>
+                  <div className="holding-list">
+                    {active.current_holdings.map((item) => (
+                      <div key={item.stock_code}>
+                        <b>{item.stock_name}</b>
+                        <span>{item.stock_code}</span>
+                        <strong>{purePct(item.weight)}</strong>
+                        <small>股息 {purePct(item.dividend_yield)} · 风险 {item.risk_score.toFixed(1)}</small>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+              <p className="industry-note">{backtest.data_note}</p>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [theme, setTheme] = useState<UiTheme>(initialTheme);
   const [page, setPage] = useState<Page>("overview");
@@ -1272,18 +1709,29 @@ export default function App() {
   const [reversion, setReversion] = useState<BankMeanReversionOverview | null>(null);
   const [reversionLoading, setReversionLoading] = useState(false);
   const [reversionError, setReversionError] = useState("");
+  const [backtest, setBacktest] = useState<StrategyBacktestResponse | null>(null);
+  const [backtestQuery, setBacktestQuery] = useState<StrategyBacktestQuery>(DEFAULT_BACKTEST_QUERY);
+  const [backtestLoading, setBacktestLoading] = useState(false);
+  const [backtestPreparing, setBacktestPreparing] = useState(false);
+  const [backtestError, setBacktestError] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const rating = result ? RATING[result.final_rating] : null;
   const marketDateLagged = Boolean(result?.market_date && date && result.market_date < date);
   const visiblePage = useMemo(
-    () => (result || page === "reversion" || page === "methods" ? page : "overview"),
+    () => (result || page === "reversion" || page === "backtest" || page === "methods" ? page : "overview"),
     [page, result],
   );
 
   useEffect(() => {
     if (visiblePage === "reversion" && !reversion && !reversionLoading) {
       void loadMeanReversion(false);
+    }
+  }, [visiblePage]);
+
+  useEffect(() => {
+    if (visiblePage === "backtest" && !backtest && !backtestLoading) {
+      void loadBacktest();
     }
   }, [visiblePage]);
 
@@ -1302,6 +1750,43 @@ export default function App() {
       setReversionError(err instanceof Error ? err.message : "暂时无法连接全银行排序服务");
     } finally {
       setReversionLoading(false);
+    }
+  }
+
+  const shouldPrepareBacktestCache = (message: string) =>
+    /缓存|cache|快照|本地|历史不足|生成缓存/i.test(message);
+
+  async function prepareBacktestData(params = backtestQuery) {
+    setBacktestPreparing(true);
+    setBacktestError("");
+    try {
+      const overview = await getMeanReversionOverview(date, true, true);
+      setReversion(overview);
+      const response = await getStrategyBacktest(params);
+      setBacktest(response);
+    } catch (err) {
+      setBacktestError(err instanceof Error ? err.message : "自动拉取缓存失败，请确认后端和数据源可用");
+    } finally {
+      setBacktestPreparing(false);
+    }
+  }
+
+  async function loadBacktest(params = backtestQuery, allowAutoPrepare = true) {
+    setBacktestLoading(true);
+    setBacktestError("");
+    try {
+      const response = await getStrategyBacktest(params);
+      setBacktest(response);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "暂时无法完成策略回测";
+      if (allowAutoPrepare && shouldPrepareBacktestCache(message)) {
+        setBacktestLoading(false);
+        await prepareBacktestData(params);
+        return;
+      }
+      setBacktestError(message);
+    } finally {
+      setBacktestLoading(false);
     }
   }
 
@@ -1369,6 +1854,7 @@ export default function App() {
             [
               ["overview", "概览", false],
               ["reversion", "银行排序", false],
+              ["backtest", "策略回测", false],
               ["details", "数据全景", true],
               ["scenarios", "情景推演", true],
               ["methods", "模型说明", false],
@@ -1387,6 +1873,8 @@ export default function App() {
                   ? "◌"
                   : key === "reversion"
                     ? "▦"
+                    : key === "backtest"
+                      ? "↝"
                   : key === "details"
                     ? "▤"
                     : key === "scenarios"
@@ -1464,7 +1952,7 @@ export default function App() {
             </button>
           </div>
         )}
-        {!result && !loading && !error && visiblePage !== "reversion" && <EmptyState />}
+        {!result && !loading && !error && !["reversion", "backtest"].includes(visiblePage) && <EmptyState />}
         {loading && (
           <div className="loading">
             <span />
@@ -1481,6 +1969,22 @@ export default function App() {
             onSelectStock={selectReversionStock}
           />
         )}
+        {visiblePage === "backtest" && (
+          <BacktestPage
+            backtest={backtest}
+            loading={backtestLoading}
+            error={backtestError}
+            preparing={backtestPreparing}
+            query={backtestQuery}
+            onQueryChange={setBacktestQuery}
+            onRunWithQuery={(nextQuery) => {
+              setBacktestQuery(nextQuery);
+              void loadBacktest(nextQuery);
+            }}
+            onRefresh={() => void loadBacktest()}
+            onPrepare={() => void prepareBacktestData()}
+          />
+        )}
         {result && visiblePage === "overview" && (
           <div className="overview fade-in">
             <section className="hero-card">
@@ -1489,9 +1993,11 @@ export default function App() {
                   {result.stock_code} · 市场数据 {result.market_date ?? "—"}
                 </span>
                 <div className="bank-heading">
-                  <div className={`bank-logo ${result.bank_profile.logo_tone}`} aria-label={`${result.stock_name} 缩写标识`}>
-                    {result.bank_profile.logo_text}
-                  </div>
+                  <BankLogo
+                    stockCode={result.stock_code}
+                    stockName={result.stock_name}
+                    profile={result.bank_profile}
+                  />
                   <div>
                     <h2>{result.stock_name}</h2>
                     <span className="bank-profile">{result.bank_profile.bank_type} · {result.bank_profile.brief}</span>

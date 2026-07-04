@@ -167,3 +167,66 @@ export interface BankMeanReversionOverview {
   failures: Array<{ stock_code: string; error: string }>;
   data_note: string;
 }
+
+export type BacktestStrategyId = "income_core" | "value_reversion" | "defensive_rotation";
+
+export interface StrategyBacktestQuery {
+  years: number;
+  start_date?: string | null;
+  end_date?: string | null;
+  rebalance_frequency: "monthly" | "quarterly" | "semiannual" | "annual";
+  holding_count: number;
+  min_dividend_yield: number;
+  min_dividend_safety: number;
+  min_stable_growth: number;
+  max_risk_score: number;
+  max_payout_ratio: number;
+  dividend_weight: number;
+  safety_weight: number;
+  growth_weight: number;
+  valuation_weight: number;
+  risk_penalty_weight: number;
+}
+
+export interface StrategyBacktestResult {
+  strategy_id: BacktestStrategyId;
+  strategy_name: string;
+  description: string;
+  metrics: {
+    total_return: number;
+    annualized_return: number;
+    max_drawdown: number;
+    max_drawdown_date: string;
+    recovery_date: string | null;
+    recovery_days: number | null;
+    volatility: number;
+    sharpe: number | null;
+    calmar: number | null;
+    win_year_rate: number;
+    annual_dividend_return: number;
+    turnover: number;
+    rebalance_count: number;
+  };
+  equity_curve: Array<{ date: string; value: number }>;
+  drawdown_curve: Array<{ date: string; value: number }>;
+  yearly_returns: Array<{ year: number; return_rate: number }>;
+  current_holdings: Array<{
+    stock_code: string;
+    stock_name: string;
+    weight: number;
+    score: number;
+    dividend_yield: number;
+    risk_score: number;
+  }>;
+}
+
+export interface StrategyBacktestResponse {
+  module: string;
+  title: string;
+  start_date: string;
+  end_date: string;
+  strategy_count: number;
+  benchmark_note: string;
+  data_note: string;
+  results: StrategyBacktestResult[];
+}

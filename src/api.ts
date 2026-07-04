@@ -2,6 +2,8 @@ import type {
   BankMeanReversionOverview,
   IndustryBenchmark,
   MonteCarloResult,
+  StrategyBacktestQuery,
+  StrategyBacktestResponse,
   ValuationResult,
 } from "./types";
 
@@ -10,10 +12,16 @@ const BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const startedAt = performance.now();
   console.info(`[Bank Valuation] request → ${path}`, options?.body);
-  const response = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
-    ...options,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      ...options,
+    });
+  } catch (err) {
+    console.error(`[Bank Valuation] network failed ← ${path}`, err);
+    throw new Error("无法连接后端服务。请确认后端已在 8000 端口启动，然后重试。");
+  }
   if (!response.ok) {
     const error = await response.json().catch(() => null);
     console.error(`[Bank Valuation] request failed ← ${path}`, { status: response.status, detail: error?.detail });
@@ -54,5 +62,12 @@ export function getMeanReversionOverview(
       refresh_cache,
       include_risky,
     }),
+  });
+}
+
+export function getStrategyBacktest(params: StrategyBacktestQuery) {
+  return request<StrategyBacktestResponse>("/api/bank/strategy-backtest", {
+    method: "POST",
+    body: JSON.stringify(params),
   });
 }
