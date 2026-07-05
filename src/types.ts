@@ -186,6 +186,21 @@ export interface StrategyBacktestQuery {
   growth_weight: number;
   valuation_weight: number;
   risk_penalty_weight: number;
+  initial_capital: number;
+  commission_rate: number;
+  stamp_duty_rate: number;
+  transfer_fee_rate: number;
+  slippage_rate: number;
+  cash_yield: number;
+}
+
+export interface BacktestHolding {
+  stock_code: string;
+  stock_name: string;
+  weight: number;
+  score: number;
+  dividend_yield: number;
+  risk_score: number;
 }
 
 export interface StrategyBacktestResult {
@@ -206,17 +221,16 @@ export interface StrategyBacktestResult {
     annual_dividend_return: number;
     turnover: number;
     rebalance_count: number;
+    total_transaction_cost: number;
   };
   equity_curve: Array<{ date: string; value: number }>;
   drawdown_curve: Array<{ date: string; value: number }>;
+  transaction_cost_curve?: Array<{ date: string; value: number }>;
   yearly_returns: Array<{ year: number; return_rate: number }>;
-  current_holdings: Array<{
-    stock_code: string;
-    stock_name: string;
-    weight: number;
-    score: number;
-    dividend_yield: number;
-    risk_score: number;
+  current_holdings: BacktestHolding[];
+  holding_snapshots?: Array<{
+    date: string;
+    holdings: BacktestHolding[];
   }>;
 }
 
@@ -228,5 +242,6 @@ export interface StrategyBacktestResponse {
   strategy_count: number;
   benchmark_note: string;
   data_note: string;
+  benchmark_curve?: Array<{ date: string; value: number }>;
   results: StrategyBacktestResult[];
 }

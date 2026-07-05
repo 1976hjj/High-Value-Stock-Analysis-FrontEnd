@@ -1,0 +1,213 @@
+.sidebar nav button {
+  width: 100%;
+  background-clip: padding-box !important;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  transition:
+    background-color 0.2s ease,
+    background-image 0.2s ease,
+    border-color 0.24s ease,
+    box-shadow 0.24s ease,
+    color 0.2s ease,
+    filter 0.24s ease !important;
+}
+
+.sidebar nav button::before {
+  display: none !important;
+}
+
+.sidebar nav button:not(:disabled):hover {
+  background-color: transparent !important;
+  background-image: linear-gradient(120deg, #d8f4ea 0%, #dff0ff 48%, #fff1de 100%) !important;
+  color: #145f89 !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 166, 200, 0.22),
+    0 10px 24px rgba(22, 102, 160, 0.12) !important;
+  filter: saturate(1.04) !important;
+  transform: none !important;
+}
+
+.sidebar nav button.active:not(:disabled):hover {
+  background-color: transparent !important;
+  background-image: linear-gradient(120deg, #1394d8 0%, #10b8c7 55%, #44d5b4 100%) !important;
+  color: #fff !important;
+  box-shadow: 0 12px 28px rgba(0, 126, 190, 0.2) !important;
+}
+
+.sidebar nav button:disabled:hover {
+  background-color: transparent !important;
+  background-image: linear-gradient(
+    120deg,
+    rgba(216, 244, 234, 0.34),
+    rgba(223, 240, 255, 0.3),
+    rgba(255, 241, 222, 0.28)
+  ) !important;
+  box-shadow: inset 0 0 0 1px rgba(120, 150, 160, 0.12) !important;
+}
+
+:root[data-theme="terminal"] .sidebar nav button:not(:disabled):hover {
+  background-color: transparent !important;
+  background-image: linear-gradient(
+    120deg,
+    rgba(0, 191, 214, 0.24),
+    rgba(54, 230, 184, 0.16),
+    rgba(126, 167, 255, 0.14)
+  ) !important;
+  color: #f4f9ff !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(54, 230, 184, 0.24),
+    0 12px 26px rgba(0, 0, 0, 0.22) !important;
+}
+
+:root[data-theme="terminal"] .sidebar nav button.active:not(:disabled):hover {
+  background-image: linear-gradient(120deg, #00bfd6, #36e6b8) !important;
+  color: #06111f !important;
+}
+
+:root[data-theme="research"] .sidebar nav button:not(:disabled):hover {
+  background-color: transparent !important;
+  background-image: linear-gradient(120deg, #eef8f4, #edf4ff 52%, #fff7e8) !important;
+  color: #17202a !important;
+  box-shadow: inset 0 0 0 1px rgba(51, 95, 168, 0.16) !important;
+}
+
+:root[data-theme="research"] .sidebar nav button.active:not(:disabled):hover {
+  background-image: linear-gradient(120deg, #17202a, #335f73) !important;
+  color: #fff !important;
+}
+
+.query-button,
+.market-lag button,
+.reversion-actions .refresh-button,
+.backtest-presets button,
+.backtest-error button,
+.theme-switch button,
+.bank-search > button,
+.bank-search-menu button {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  transition:
+    border-color 0.24s ease,
+    box-shadow 0.24s ease,
+    color 0.2s ease,
+    filter 0.24s ease,
+    opacity 0.2s ease,
+    transform 0.24s ease !important;
+}
+
+.query-button::after,
+.market-lag button::after,
+.reversion-actions .refresh-button::after,
+.backtest-presets button::after,
+.backtest-error button::after,
+.theme-switch button::after,
+.bank-search > button::after,
+.bank-search-menu button::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: linear-gradient(125deg, rgba(255,255,255,0.22), rgba(128,240,216,0.18) 46%, rgba(168,199,255,0.18));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s ease;
+}
+
+.query-button:not(:disabled):hover,
+.market-lag button:not(:disabled):hover,
+.reversion-actions .refresh-button:not(:disabled):hover,
+.backtest-presets button:not(:disabled):hover,
+.backtest-error button:not(:disabled):hover,
+.theme-switch button:not(:disabled):hover,
+.bank-search > button:not(:disabled):hover,
+.bank-search-menu button:not(:disabled):hover {
+  transform: translateY(-1px) !important;
+  filter: saturate(1.04) brightness(1.01) !important;
+}
+
+.query-button:not(:disabled):hover::after,
+.market-lag button:not(:disabled):hover::after,
+.reversion-actions .refresh-button:not(:disabled):hover::after,
+.backtest-presets button:not(:disabled):hover::after,
+.backtest-error button:not(:disabled):hover::after,
+.theme-switch button:not(:disabled):hover::after,
+.bank-search > button:not(:disabled):hover::after,
+.bank-search-menu button:not(:disabled):hover::after {
+  opacity: 1;
+}
+
+.reversion-actions .refresh-button:not(.primary):not(:disabled):hover,
+.backtest-presets button:not(.active):not(:disabled):hover,
+.theme-switch button:not(.active):not(:disabled):hover,
+.bank-search-menu button:not(:disabled):hover {
+  background-color: rgba(255,255,255,0.72) !important;
+  background-image: linear-gradient(125deg, rgba(255,255,255,0.58), rgba(232,247,255,0.5) 52%, rgba(239,255,251,0.46)) !important;
+  color: var(--ink) !important;
+  border-color: rgba(0, 166, 200, 0.24) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,0.5),
+    0 10px 22px rgba(22,102,160,0.1) !important;
+}
+
+.query-button:not(:disabled):hover,
+.reversion-actions .refresh-button.primary:not(:disabled):hover,
+.backtest-error button:not(:disabled):hover {
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,0.32),
+    0 14px 30px rgba(0,111,201,0.18) !important;
+}
+
+:root[data-theme="terminal"] .reversion-actions .refresh-button:not(.primary):not(:disabled):hover,
+:root[data-theme="terminal"] .backtest-presets button:not(.active):not(:disabled):hover,
+:root[data-theme="terminal"] .theme-switch button:not(.active):not(:disabled):hover,
+:root[data-theme="terminal"] .bank-search-menu button:not(:disabled):hover {
+  background-color: rgba(10, 23, 40, 0.86) !important;
+  background-image: linear-gradient(125deg, rgba(0,191,214,0.1), rgba(54,230,184,0.07)) !important;
+  color: #eaf4ff !important;
+  border-color: rgba(54, 230, 184, 0.28) !important;
+  box-shadow: 0 12px 24px rgba(0,0,0,0.22) !important;
+}
+
+.reversion-actions .refresh-button:not(.primary),
+.backtest-presets button:not(.active),
+.theme-switch button:not(.active) {
+  background-image: linear-gradient(125deg, rgba(255,255,255,0.1), rgba(255,255,255,0)) !important;
+}
+
+.bank-search > button {
+  position: absolute !important;
+  top: 4px !important;
+  right: 4px !important;
+  z-index: 2;
+  width: 28px !important;
+  height: 28px !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.bank-search > button:not(:disabled):hover {
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+.reversion-actions .refresh-button:not(.primary) {
+  color: #145f89 !important;
+  background-color: rgba(255, 255, 255, 0.78) !important;
+  border-color: rgba(0, 126, 190, 0.42) !important;
+}
+
+.reversion-actions .refresh-button:not(.primary):disabled {
+  color: #2f6f8f !important;
+  background-color: rgba(255, 255, 255, 0.82) !important;
+  border-color: rgba(0, 126, 190, 0.5) !important;
+  opacity: 1 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar nav button {
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   getIndustryBenchmark,
   getMeanReversionOverview,
@@ -47,17 +47,72 @@ const BANK_OPTIONS = [
 ] as const;
 
 const BANK_LOGO_CODES = new Set([
-  "000001", "002142", "002958", "002966", "600000", "600015", "600016", "600036",
-  "600919", "601009", "601077", "601166", "601169", "601288", "601328", "601398",
-  "601528", "601577", "601658", "601665", "601818", "601825", "601916", "601939",
-  "601963", "601988", "601997", "601998", "603323",
+  "000001", "001227", "002142", "002807", "002839", "002936", "002948", "002958",
+  "002966", "600000", "600015", "600016", "600036", "600908", "600919", "600926",
+  "600928", "601009", "601077", "601128", "601166", "601169", "601187", "601229",
+  "601288", "601328", "601398", "601528", "601577", "601658", "601665", "601818",
+  "601825", "601838", "601860", "601916", "601939", "601963", "601988", "601997",
+  "601998", "603323",
 ]);
+
+const BANK_SEARCH_ALIASES: Record<string, string> = {
+  "600036": "zsyh zhaoshangyinhang cmb",
+  "601398": "gsyh gongshangyinhang icbc",
+  "601939": "jsyh jiansheyinhang ccb",
+  "601288": "nyyh nongyeyinhang abc",
+  "601988": "zgyh zhongguoyinhang boc",
+  "601658": "ycyh youchuyinhang psbc",
+  "601328": "jtyh jiaotongyinhang bcm",
+  "601166": "xyyh xingyeyinhang cib",
+  "000001": "payh pinganyinhang pab",
+  "601818": "gdyh guangdayinhang ceb",
+  "601998": "zxyh zhongxinyinhang citic",
+  "600000": "pfyh pufa pudongfazhan spdb",
+  "600016": "msyh minshengyinhang cmbc",
+  "600015": "hxyh huaxiayinhang hxb",
+  "601916": "zsyh zheshangyinhang czb",
+  "002142": "nbyh ningboyinhang nbb",
+  "601169": "bjyh beijingyinhang bob",
+  "601229": "shyh shanghaiyinhang bos",
+  "600919": "jsyh jiangsuyinhang",
+  "600926": "hzyh hangzhouyinhang",
+  "601009": "njyh nanjingyinhang",
+  "601838": "cdyh chengduyinhang",
+  "601577": "csyh changshayinhang",
+  "601997": "gyyh guiyangyinhang",
+  "601963": "cqyh chongqingyinhang",
+  "601825": "shnsyh shanghainongshangyinhang",
+  "601077": "ycns yh ycnsyh yuchongnongshangyinhang",
+  "600928": "xayh xianyinhang",
+  "601665": "qlyh qiluyinhang",
+  "601187": "xmyh xiamenyinhang",
+  "601860": "zjyh zijinyinhang",
+  "601528": "rfyh ruifengyinhang",
+  "600908": "wxyh wuxiyinhang",
+  "001227": "lzyh lanzhouyinhang",
+  "002936": "zzyh zhengzhouyinhang",
+  "002966": "szyh suzhouyinhang",
+  "002948": "qdyh qingdaoyinhang",
+  "601128": "csyh changshuyinhang",
+  "603323": "snyh sunongyinhang",
+  "002807": "jyyh jiangyinyinhang",
+  "002839": "zjgyh zhangjiagangyinhang",
+  "002958": "qnsyh qingnongshanghang qingdaonongshang",
+};
 
 const formatBankOption = (bankCode: string) => {
   const normalized = bankCode.includes(".") ? bankCode.split(".")[1] : bankCode;
   const option = BANK_OPTIONS.find(([code]) => code === normalized);
   return option ? `${option[0]} · ${option[1]}` : normalized;
 };
+
+const normalizeBankSearchText = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[\s路·•・.。丶、,，:：;；|｜/\\\-—–_]/g, "");
+
+const bankSearchHaystack = (code: string, name: string) =>
+  normalizeBankSearchText(`${code}${name}${BANK_SEARCH_ALIASES[code] ?? ""}`);
 
 const resolveBankCode = (input: string, fallback: string) => {
   const text = input.trim();
@@ -69,8 +124,9 @@ const resolveBankCode = (input: string, fallback: string) => {
     ([code, name]) => name === text || `${code}·${name}` === compact,
   );
   if (exact) return exact[0];
+  const normalizedText = normalizeBankSearchText(text);
   const partial = BANK_OPTIONS.find(
-    ([code, name]) => code.includes(text) || name.includes(text),
+    ([code, name]) => code.includes(text) || name.includes(text) || bankSearchHaystack(code, name).includes(normalizedText),
   );
   return partial?.[0] ?? fallback;
 };
@@ -148,9 +204,18 @@ const RISK_LIGHT: Record<
 
 const money = (value: number | null) =>
   value === null ? "—" : `¥${value.toFixed(2)}`;
+const capitalMoney = (value: number) => {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 100_000_000) return `${sign}¥${(abs / 100_000_000).toFixed(2)}亿`;
+  if (abs >= 10_000) return `${sign}¥${(abs / 10_000).toFixed(1)}万`;
+  return `${sign}¥${abs.toFixed(0)}`;
+};
 const pct = (value: number) =>
   `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`;
 const purePct = (value: number) => `${(value * 100).toFixed(1)}%`;
+const drawdownPct = (value: number) =>
+  value === 0 ? "0.0%" : pct(value);
 const maybePct = (value: number | null) =>
   value === null ? "—" : purePct(value);
 const dayPct = (value: number | null) =>
@@ -190,35 +255,14 @@ const DEFAULT_BACKTEST_QUERY: StrategyBacktestQuery = {
   dividend_weight: 0.25,
   safety_weight: 0.25,
   growth_weight: 0.2,
-  valuation_weight: 0.2,
+  valuation_weight: 0.15,
   risk_penalty_weight: 0.15,
-};
-
-const LOW_DRAWDOWN_BACKTEST_QUERY: StrategyBacktestQuery = {
-  ...DEFAULT_BACKTEST_QUERY,
-  holding_count: 8,
-  min_dividend_yield: 0.035,
-  min_dividend_safety: 65,
-  min_stable_growth: 55,
-  max_risk_score: 32,
-  max_payout_ratio: 0.7,
-  safety_weight: 0.3,
-  growth_weight: 0.25,
-  risk_penalty_weight: 0.25,
-  valuation_weight: 0.1,
-};
-
-const INCOME_PLUS_BACKTEST_QUERY: StrategyBacktestQuery = {
-  ...DEFAULT_BACKTEST_QUERY,
-  holding_count: 12,
-  min_dividend_yield: 0.04,
-  min_dividend_safety: 52,
-  min_stable_growth: 40,
-  max_risk_score: 48,
-  max_payout_ratio: 0.85,
-  dividend_weight: 0.35,
-  valuation_weight: 0.25,
-  risk_penalty_weight: 0.12,
+  initial_capital: 1_000_000,
+  commission_rate: 0.0002,
+  stamp_duty_rate: 0.0005,
+  transfer_fee_rate: 0.00001,
+  slippage_rate: 0.0001,
+  cash_yield: 0.015,
 };
 
 const BACKTEST_PRESET_COMPARE_KEYS: Array<keyof StrategyBacktestQuery> = [
@@ -237,7 +281,43 @@ const BACKTEST_PRESET_COMPARE_KEYS: Array<keyof StrategyBacktestQuery> = [
   "growth_weight",
   "valuation_weight",
   "risk_penalty_weight",
+  "initial_capital",
+  "commission_rate",
+  "stamp_duty_rate",
+  "transfer_fee_rate",
+  "slippage_rate",
+  "cash_yield",
 ];
+
+type SavedBacktestPreset = {
+  id: string;
+  name: string;
+  createdAt: string;
+  query: StrategyBacktestQuery;
+};
+
+const SAVED_BACKTEST_PRESETS_KEY = "bank-backtest-saved-parameter-sets";
+
+const savedPresetName = () => {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return `参数 ${local.toISOString().slice(0, 16).replace("T", " ")}`;
+};
+
+const readSavedBacktestPresets = (): SavedBacktestPreset[] => {
+  try {
+    const raw = localStorage.getItem(SAVED_BACKTEST_PRESETS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as SavedBacktestPreset[];
+    return Array.isArray(parsed) ? parsed.filter((item) => item?.id && item?.query) : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeSavedBacktestPresets = (presets: SavedBacktestPreset[]) => {
+  localStorage.setItem(SAVED_BACKTEST_PRESETS_KEY, JSON.stringify(presets.slice(0, 20)));
+};
 
 function Particles() {
   return (
@@ -1169,6 +1249,11 @@ function MeanReversionPage({
                   <article className={`reversion-row ${status.tone}`} key={row.stock_code}>
                     <div className="row-bank">
                       <b>#{isIncomeMode ? index + 1 : row.rank}</b>
+                      <BankLogo
+                        stockCode={row.stock_code}
+                        stockName={row.stock_name}
+                        profile={row.bank_profile}
+                      />
                       <div>
                         <strong>{row.stock_name}</strong>
                         <span>{row.stock_code} · PB {row.current_pb.toFixed(2)}</span>
@@ -1269,15 +1354,19 @@ function BankSearchBox({
   onSelect: (code: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const keyword = value.trim().toLowerCase().replace(/\s/g, "");
+  const keyword = normalizeBankSearchText(value);
   const matches = useMemo(() => {
-    const filtered = keyword
-      ? BANK_OPTIONS.filter(([code, name]) =>
-          `${code}${name}`.toLowerCase().includes(keyword),
-        )
-      : BANK_OPTIONS;
+    if (!keyword) return BANK_OPTIONS.slice(0, 10);
+    const filtered = BANK_OPTIONS.filter(([code, name]) =>
+      bankSearchHaystack(code, name).includes(keyword),
+    );
+    if (filtered.length === 0) return BANK_OPTIONS.slice(0, 10);
+    if (filtered.length === 1 && filtered[0][0] === selectedCode) {
+      const rest = BANK_OPTIONS.filter(([code]) => code !== selectedCode);
+      return [...filtered, ...rest].slice(0, 10);
+    }
     return filtered.slice(0, 10);
-  }, [keyword]);
+  }, [keyword, selectedCode]);
   const choose = (bankCode: string) => {
     onSelect(bankCode);
     onValueChange(formatBankOption(bankCode));
@@ -1370,12 +1459,6 @@ function BankLogo({
   );
 }
 
-const BACKTEST_TONE: Record<BacktestStrategyId, string> = {
-  income_core: "mint",
-  value_reversion: "lavender",
-  defensive_rotation: "peach",
-};
-
 const BACKTEST_FREQUENCY_LABEL: Record<StrategyBacktestQuery["rebalance_frequency"], string> = {
   monthly: "每月",
   quarterly: "每季",
@@ -1383,17 +1466,439 @@ const BACKTEST_FREQUENCY_LABEL: Record<StrategyBacktestQuery["rebalance_frequenc
   annual: "每年",
 };
 
-const BACKTEST_WEIGHT_FIELDS: Array<[
-  string,
-  "dividend_weight" | "safety_weight" | "growth_weight" | "valuation_weight" | "risk_penalty_weight",
-  string,
-]> = [
-  ["股息权重", "dividend_weight", "越高越偏向高股息率股票。想提高现金收益可上调；若担心高息陷阱，不要单独拉太高。"],
-  ["安全权重", "safety_weight", "越高越偏向分红覆盖、资本和资产质量更稳的银行。低回撤策略通常应提高这一项。"],
-  ["增长权重", "growth_weight", "越高越看重利润和经营稳定性。想避开利润下滑银行，可提高到 0.25-0.35。"],
-  ["低估权重", "valuation_weight", "越高越偏向 PB 历史低位和均值回归空间。想做估值修复可提高；想稳拿股息可适中。"],
-  ["风险惩罚", "risk_penalty_weight", "越高越严格压低风险高的银行。目标是低回撤时建议提高；收益进攻时可略降。"],
+type BacktestWeightKey =
+  | "dividend_weight"
+  | "safety_weight"
+  | "growth_weight"
+  | "valuation_weight"
+  | "risk_penalty_weight";
+
+const BACKTEST_WEIGHT_KEYS: BacktestWeightKey[] = [
+  "dividend_weight",
+  "safety_weight",
+  "growth_weight",
+  "valuation_weight",
+  "risk_penalty_weight",
 ];
+
+const BACKTEST_WEIGHT_FIELDS: Array<[string, BacktestWeightKey, string]> = [
+  ["股息权重", "dividend_weight", "越高越偏向高股息率银行。适合提高现金收益，但不要单独拉太高。"],
+  ["安全权重", "safety_weight", "越高越看重分红覆盖、资本和资产质量，通常有助于压低回撤。"],
+  ["增长权重", "growth_weight", "越高越看重利润、ROE 和经营稳定性，用来避开增长走弱的银行。"],
+  ["低估权重", "valuation_weight", "越高越偏向 PB 历史低位和均值回归空间。"],
+  ["风险权重", "risk_penalty_weight", "越高越严格惩罚风险分高的银行，追求稳健时可以提高。"],
+];
+
+type BacktestOptimizationGoal = "defensive" | "balanced" | "income";
+
+type BacktestOptimizationOption = {
+  goal: BacktestOptimizationGoal;
+  label: string;
+  note: string;
+  query: StrategyBacktestQuery;
+  metrics: StrategyBacktestResult["metrics"];
+  strategyName: string;
+  score: number;
+};
+
+const BACKTEST_OPTIMIZATION_META: Record<
+  BacktestOptimizationGoal,
+  { label: string; note: string; strategyId: BacktestStrategyId }
+> = {
+  defensive: { label: "稳健权重", note: "提高安全与风险权重，优先观察回撤。", strategyId: "income_core" },
+  balanced: { label: "均衡权重", note: "在股息、安全、增长和低估之间折中。", strategyId: "income_core" },
+  income: { label: "收益权重", note: "提高股息与低估权重，偏向收益弹性。", strategyId: "income_core" },
+};
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const roundTo = (value: number, digits = 2) => Number(value.toFixed(digits));
+const backtestWeightTotal = (query: Pick<StrategyBacktestQuery, BacktestWeightKey>) =>
+  roundTo(BACKTEST_WEIGHT_KEYS.reduce((sum, key) => sum + query[key], 0), 2);
+
+const normalizeWeightPatch = (weights: Record<BacktestWeightKey, number>) => {
+  const units = BACKTEST_WEIGHT_KEYS.reduce((next, key) => ({
+    ...next,
+    [key]: Math.round(clamp(weights[key], 0, 1) * 100),
+  }), {} as Record<BacktestWeightKey, number>);
+  let total = BACKTEST_WEIGHT_KEYS.reduce((sum, key) => sum + units[key], 0);
+  if (total < 100) {
+    units.risk_penalty_weight += 100 - total;
+  } else if (total > 100) {
+    let overflow = total - 100;
+    const reducers: BacktestWeightKey[] = [
+      "risk_penalty_weight",
+      ...BACKTEST_WEIGHT_KEYS
+        .filter((key) => key !== "risk_penalty_weight")
+        .sort((left, right) => units[right] - units[left]),
+    ];
+    for (const key of reducers) {
+      if (overflow <= 0) break;
+      const take = Math.min(units[key], overflow);
+      units[key] -= take;
+      overflow -= take;
+    }
+  }
+  return BACKTEST_WEIGHT_KEYS.reduce((next, key) => ({
+    ...next,
+    [key]: roundTo(units[key] / 100, 2),
+  }), {} as Record<BacktestWeightKey, number>);
+};
+
+const rebalanceBacktestWeights = (
+  query: StrategyBacktestQuery,
+  changedKey: BacktestWeightKey,
+  nextValue: number,
+) => {
+  const units = BACKTEST_WEIGHT_KEYS.reduce((next, key) => ({
+    ...next,
+    [key]: Math.round(clamp(query[key], 0, 1) * 100),
+  }), {} as Record<BacktestWeightKey, number>);
+  const requested = Math.round(clamp(nextValue, 0, 1) * 100);
+  const current = units[changedKey];
+  const delta = requested - current;
+  const balanceKey: BacktestWeightKey = changedKey === "risk_penalty_weight"
+    ? "safety_weight"
+    : "risk_penalty_weight";
+
+  if (delta > 0) {
+    let need = delta;
+    const reducers: BacktestWeightKey[] = [
+      balanceKey,
+      ...BACKTEST_WEIGHT_KEYS
+        .filter((key) => key !== changedKey && key !== balanceKey)
+        .sort((left, right) => units[right] - units[left]),
+    ];
+    for (const key of reducers) {
+      if (need <= 0) break;
+      const take = Math.min(units[key], need);
+      units[key] -= take;
+      need -= take;
+    }
+    units[changedKey] = current + delta - need;
+  } else if (delta < 0) {
+    units[changedKey] = requested;
+    units[balanceKey] += -delta;
+  }
+
+  return BACKTEST_WEIGHT_KEYS.reduce((next, key) => ({
+    ...next,
+    [key]: roundTo(units[key] / 100, 2),
+  }), {} as Record<BacktestWeightKey, number>);
+};
+
+const normalizeBacktestQuery = (query: StrategyBacktestQuery): StrategyBacktestQuery => ({
+  ...query,
+  years: Math.round(clamp(query.years, 3, 15)),
+  holding_count: Math.round(clamp(query.holding_count, 3, 20)),
+  min_dividend_yield: roundTo(clamp(query.min_dividend_yield, 0, .12), 4),
+  min_dividend_safety: Math.round(clamp(query.min_dividend_safety, 0, 95)),
+  min_stable_growth: Math.round(clamp(query.min_stable_growth, 0, 95)),
+  max_risk_score: Math.round(clamp(query.max_risk_score, 15, 75)),
+  max_payout_ratio: roundTo(clamp(query.max_payout_ratio, .35, 1.2), 3),
+  initial_capital: Math.round(clamp(query.initial_capital ?? DEFAULT_BACKTEST_QUERY.initial_capital, 10_000, 1_000_000_000)),
+  commission_rate: roundTo(clamp(query.commission_rate ?? DEFAULT_BACKTEST_QUERY.commission_rate, 0, .01), 6),
+  stamp_duty_rate: roundTo(clamp(query.stamp_duty_rate ?? DEFAULT_BACKTEST_QUERY.stamp_duty_rate, 0, .02), 6),
+  transfer_fee_rate: roundTo(clamp(query.transfer_fee_rate ?? DEFAULT_BACKTEST_QUERY.transfer_fee_rate, 0, .01), 6),
+  slippage_rate: roundTo(clamp(query.slippage_rate ?? DEFAULT_BACKTEST_QUERY.slippage_rate, 0, .02), 6),
+  cash_yield: roundTo(clamp(query.cash_yield ?? DEFAULT_BACKTEST_QUERY.cash_yield, 0, .1), 6),
+  ...normalizeWeightPatch({
+    dividend_weight: query.dividend_weight ?? DEFAULT_BACKTEST_QUERY.dividend_weight,
+    safety_weight: query.safety_weight ?? DEFAULT_BACKTEST_QUERY.safety_weight,
+    growth_weight: query.growth_weight ?? DEFAULT_BACKTEST_QUERY.growth_weight,
+    valuation_weight: query.valuation_weight ?? DEFAULT_BACKTEST_QUERY.valuation_weight,
+    risk_penalty_weight: query.risk_penalty_weight ?? DEFAULT_BACKTEST_QUERY.risk_penalty_weight,
+  }),
+});
+
+const backtestQueryKey = (query: StrategyBacktestQuery) =>
+  JSON.stringify({
+    years: query.years,
+    start_date: query.start_date ?? null,
+    end_date: query.end_date ?? null,
+    rebalance_frequency: query.rebalance_frequency,
+    holding_count: query.holding_count,
+    min_dividend_yield: query.min_dividend_yield,
+    min_dividend_safety: query.min_dividend_safety,
+    min_stable_growth: query.min_stable_growth,
+    max_risk_score: query.max_risk_score,
+    max_payout_ratio: query.max_payout_ratio,
+    dividend_weight: query.dividend_weight,
+    safety_weight: query.safety_weight,
+    growth_weight: query.growth_weight,
+    valuation_weight: query.valuation_weight,
+    risk_penalty_weight: query.risk_penalty_weight,
+    initial_capital: query.initial_capital,
+    commission_rate: query.commission_rate,
+    stamp_duty_rate: query.stamp_duty_rate,
+    transfer_fee_rate: query.transfer_fee_rate,
+    slippage_rate: query.slippage_rate,
+    cash_yield: query.cash_yield,
+  });
+
+const buildOptimizationCandidates = (baseQuery: StrategyBacktestQuery) => {
+  const base = normalizeBacktestQuery(baseQuery);
+  const patch = (
+    goal: BacktestOptimizationGoal,
+    weights: Record<BacktestWeightKey, number>,
+  ) => ({ goal, query: normalizeBacktestQuery({ ...base, ...normalizeWeightPatch(weights) }) });
+  const candidates = [
+    patch("defensive", {
+      dividend_weight: .22,
+      safety_weight: .3,
+      growth_weight: .18,
+      valuation_weight: .1,
+      risk_penalty_weight: .2,
+    }),
+    patch("defensive", {
+      dividend_weight: .18,
+      safety_weight: .34,
+      growth_weight: .2,
+      valuation_weight: .08,
+      risk_penalty_weight: .2,
+    }),
+    patch("defensive", {
+      dividend_weight: .25,
+      safety_weight: .28,
+      growth_weight: .15,
+      valuation_weight: .12,
+      risk_penalty_weight: .2,
+    }),
+    patch("defensive", {
+      dividend_weight: base.dividend_weight,
+      safety_weight: base.safety_weight + .08,
+      growth_weight: base.growth_weight,
+      valuation_weight: base.valuation_weight - .05,
+      risk_penalty_weight: base.risk_penalty_weight + .07,
+    }),
+    patch("balanced", {
+      dividend_weight: .25,
+      safety_weight: .25,
+      growth_weight: .2,
+      valuation_weight: .15,
+      risk_penalty_weight: .15,
+    }),
+    patch("balanced", {
+      dividend_weight: .22,
+      safety_weight: .24,
+      growth_weight: .24,
+      valuation_weight: .16,
+      risk_penalty_weight: .14,
+    }),
+    patch("balanced", {
+      dividend_weight: .28,
+      safety_weight: .22,
+      growth_weight: .18,
+      valuation_weight: .18,
+      risk_penalty_weight: .14,
+    }),
+    patch("balanced", {
+      dividend_weight: base.dividend_weight,
+      safety_weight: base.safety_weight,
+      growth_weight: base.growth_weight,
+      valuation_weight: base.valuation_weight,
+      risk_penalty_weight: base.risk_penalty_weight,
+    }),
+    patch("income", {
+      dividend_weight: .36,
+      safety_weight: .18,
+      growth_weight: .16,
+      valuation_weight: .2,
+      risk_penalty_weight: .1,
+    }),
+    patch("income", {
+      dividend_weight: .32,
+      safety_weight: .2,
+      growth_weight: .14,
+      valuation_weight: .22,
+      risk_penalty_weight: .12,
+    }),
+    patch("income", {
+      dividend_weight: .4,
+      safety_weight: .16,
+      growth_weight: .12,
+      valuation_weight: .22,
+      risk_penalty_weight: .1,
+    }),
+    patch("income", {
+      dividend_weight: base.dividend_weight + .08,
+      safety_weight: base.safety_weight - .04,
+      growth_weight: base.growth_weight - .03,
+      valuation_weight: base.valuation_weight + .05,
+      risk_penalty_weight: base.risk_penalty_weight - .06,
+    }),
+  ];
+  const seen = new Set<string>();
+  return candidates.filter((item) => {
+    const key = `${item.goal}:${backtestQueryKey(item.query)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const scoreBacktestOption = (
+  goal: BacktestOptimizationGoal,
+  metrics: StrategyBacktestResult["metrics"],
+) => {
+  const annual = metrics.annualized_return;
+  const drawdown = Math.abs(metrics.max_drawdown);
+  const sharpe = metrics.sharpe ?? 0;
+  const calmar = metrics.calmar ?? 0;
+  const dividend = metrics.annual_dividend_return;
+  const win = metrics.win_year_rate;
+  const volatility = metrics.volatility;
+  const turnover = metrics.turnover;
+  if (goal === "defensive") {
+    return annual * 80 + dividend * 35 + win * 10 + sharpe * 2 + calmar * 1.5 - drawdown * 120 - volatility * 25 - turnover * 1.2;
+  }
+  if (goal === "income") {
+    return annual * 120 + dividend * 45 + win * 6 + sharpe * 1.4 + calmar - drawdown * 55 - volatility * 12 - turnover * .6;
+  }
+  return annual * 100 + dividend * 25 + win * 8 + sharpe * 2 + calmar * 1.2 - drawdown * 75 - volatility * 18 - turnover * .8;
+};
+
+const pickOptimizationResult = (
+  response: StrategyBacktestResponse,
+  goal: BacktestOptimizationGoal,
+) => {
+  const preferred = BACKTEST_OPTIMIZATION_META[goal].strategyId;
+  return response.results.find((item) => item.strategy_id === preferred) ?? response.results[0] ?? null;
+};
+
+type HoldingContribution = {
+  entryDate: string | null;
+  holdingDays: number;
+  profit: number;
+};
+
+const daysBetween = (start: string, end: string) => {
+  const startTime = new Date(start).getTime();
+  const endTime = new Date(end).getTime();
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) return 0;
+  return Math.max(0, Math.round((endTime - startTime) / 86_400_000));
+};
+
+const pointValueAtOrBefore = (
+  points: Array<{ date: string; value: number }> | undefined,
+  date: string,
+) => {
+  if (!points?.length) return 0;
+  let value = points[0].value;
+  for (const point of points) {
+    if (point.date > date) break;
+    value = point.value;
+  }
+  return value;
+};
+
+const snapshotAtOrBefore = (strategy: StrategyBacktestResult, date: string) => {
+  let active = strategy.holding_snapshots?.[0] ?? null;
+  for (const snapshot of strategy.holding_snapshots ?? []) {
+    if (snapshot.date > date) break;
+    active = snapshot;
+  }
+  return active;
+};
+
+const holdingEntryDate = (strategy: StrategyBacktestResult, stockCode: string, date: string) => {
+  let entryDate: string | null = null;
+  let inPosition = false;
+  for (const snapshot of strategy.holding_snapshots ?? []) {
+    if (snapshot.date > date) break;
+    const exists = snapshot.holdings.some((holding) => holding.stock_code === stockCode);
+    if (exists && !inPosition) {
+      entryDate = snapshot.date;
+    }
+    inPosition = exists;
+  }
+  return inPosition ? entryDate : null;
+};
+
+const contributionByHolding = (strategy: StrategyBacktestResult, date: string) => {
+  const contributions = new Map<string, number>();
+  const points = strategy.equity_curve.filter((point) => point.date <= date);
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    const snapshot = snapshotAtOrBefore(strategy, previous.date);
+    if (!snapshot) continue;
+    const change = current.value - previous.value;
+    snapshot.holdings.forEach((holding) => {
+      contributions.set(
+        holding.stock_code,
+        (contributions.get(holding.stock_code) ?? 0) + change * holding.weight,
+      );
+    });
+  }
+  return contributions;
+};
+
+const holdingContribution = (
+  strategy: StrategyBacktestResult,
+  stockCode: string,
+  date: string,
+): HoldingContribution => {
+  const entryDate = holdingEntryDate(strategy, stockCode, date);
+  return {
+    entryDate,
+    holdingDays: entryDate ? daysBetween(entryDate, date) : 0,
+    profit: contributionByHolding(strategy, date).get(stockCode) ?? 0,
+  };
+};
+
+const holdingIntervalsForStock = (
+  strategy: StrategyBacktestResult,
+  stockCode: string,
+  lastDate: string,
+) => {
+  const intervals: Array<{ start: string; end: string }> = [];
+  let activeStart: string | null = null;
+  const snapshots = strategy.holding_snapshots ?? [];
+
+  snapshots.forEach((snapshot, index) => {
+    const hasHolding = snapshot.holdings.some((holding) => holding.stock_code === stockCode);
+    const nextDate = snapshots[index + 1]?.date ?? lastDate;
+    if (hasHolding && activeStart === null) {
+      activeStart = snapshot.date;
+    }
+    if ((!hasHolding || index === snapshots.length - 1) && activeStart !== null) {
+      intervals.push({ start: activeStart, end: hasHolding ? nextDate : snapshot.date });
+      activeStart = null;
+    }
+  });
+
+  return intervals;
+};
+
+const segmentOverlapsIntervals = (
+  startDate: string,
+  endDate: string,
+  intervals: Array<{ start: string; end: string }>,
+) => intervals.some((interval) => startDate <= interval.end && endDate >= interval.start);
+
+const highlightedPathSegments = (
+  points: Array<{ date: string; value: number }>,
+  x: (index: number) => number,
+  y: (value: number) => number,
+  intervals: Array<{ start: string; end: string }>,
+) => {
+  const segments: string[] = [];
+  let current: string[] = [];
+  points.forEach((point, index) => {
+    const previous = points[index - 1];
+    const segmentStart = previous?.date ?? point.date;
+    const highlighted = segmentOverlapsIntervals(segmentStart, point.date, intervals);
+    const command = `${current.length === 0 ? "M" : "L"}${x(index).toFixed(2)},${y(point.value).toFixed(2)}`;
+    if (highlighted) {
+      current.push(command);
+      return;
+    }
+    if (current.length > 1) segments.push(current.join(" "));
+    current = [];
+  });
+  if (current.length > 1) segments.push(current.join(" "));
+  return segments;
+};
 
 function ParamLabel({ label, tooltip }: { label: string; tooltip: string }) {
   return (
@@ -1407,39 +1912,177 @@ function ParamLabel({ label, tooltip }: { label: string; tooltip: string }) {
 function BacktestLineChart({
   strategy,
   mode,
+  highlightedStockCode,
+  benchmarkPoints,
 }: {
   strategy: StrategyBacktestResult;
   mode: "equity" | "drawdown";
+  highlightedStockCode?: string;
+  benchmarkPoints?: Array<{ date: string; value: number }>;
 }) {
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [chartWidth, setChartWidth] = useState(900);
   const points = mode === "equity" ? strategy.equity_curve : strategy.drawdown_curve;
-  const values = points.map((point) => point.value);
+  useEffect(() => {
+    const node = svgRef.current;
+    if (!node) return;
+    const updateWidth = () => {
+      const rect = node.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      setChartWidth(Math.max(450, Math.round((rect.width / rect.height) * 150)));
+    };
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const benchmarkSeries = mode === "equity" && benchmarkPoints?.length
+    ? points
+        .map((point, index) => ({
+          date: point.date,
+          value: pointValueAtOrBefore(benchmarkPoints, point.date),
+          index,
+        }))
+        .filter((point) => point.value > 0)
+    : [];
+  const values = [...points.map((point) => point.value), ...benchmarkSeries.map((point) => point.value)];
   const min = Math.min(...values);
   const max = Math.max(...values);
+  const chartLeft = 20;
+  const chartRight = chartWidth - 20;
+  const chartSpan = chartRight - chartLeft;
   const y = (value: number) => 126 - ((value - min) / (max - min || 1)) * 100;
-  const x = (index: number) => 20 + (index / Math.max(points.length - 1, 1)) * 410;
+  const x = (index: number) => chartLeft + (index / Math.max(points.length - 1, 1)) * chartSpan;
   const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${x(index).toFixed(2)},${y(point.value).toFixed(2)}`).join(" ");
+  const benchmarkPath = benchmarkSeries
+    .map((point, index) => `${index === 0 ? "M" : "L"}${x(point.index).toFixed(2)},${y(point.value).toFixed(2)}`)
+    .join(" ");
+  const lastPointDate = points.at(-1)?.date ?? "";
+  const highlightSegments = mode === "equity" && highlightedStockCode
+    ? highlightedPathSegments(
+        points,
+        x,
+        y,
+        holdingIntervalsForStock(strategy, highlightedStockCode, lastPointDate),
+      )
+    : [];
+  const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const chartX = ((event.clientX - rect.left) / rect.width) * chartWidth;
+    const ratio = Math.min(Math.max((chartX - chartLeft) / chartSpan, 0), 1);
+    setHoverIndex(Math.round(ratio * Math.max(points.length - 1, 0)));
+  };
   const maxDrawdownIndex = mode === "drawdown"
     ? points.findIndex((point) => point.date === strategy.metrics.max_drawdown_date)
     : -1;
   const maxDrawdownPoint = maxDrawdownIndex >= 0 ? points[maxDrawdownIndex] : null;
   const markerX = maxDrawdownIndex >= 0 ? x(maxDrawdownIndex) : 0;
   const markerY = maxDrawdownPoint ? y(maxDrawdownPoint.value) : 0;
+  const activeIndex = hoverIndex !== null && points[hoverIndex] ? hoverIndex : null;
+  const activePoint = activeIndex !== null ? points[activeIndex] : null;
+  const activeX = activeIndex !== null ? x(activeIndex) : 0;
+  const activeY = activePoint ? y(activePoint.value) : 0;
+  const activeEquity = activePoint
+    ? { date: activePoint.date, value: pointValueAtOrBefore(strategy.equity_curve, activePoint.date) }
+    : null;
+  const activeDrawdown = activePoint
+    ? { date: activePoint.date, value: pointValueAtOrBefore(strategy.drawdown_curve, activePoint.date) }
+    : null;
+  const initialEquity = strategy.equity_curve[0]?.value || 1;
+  const initialBenchmark = benchmarkPoints?.[0]?.value || initialEquity;
+  const cumulativeReturn = activeEquity ? activeEquity.value / initialEquity - 1 : null;
+  const activeBenchmarkValue = activePoint ? pointValueAtOrBefore(benchmarkPoints, activePoint.date) : 0;
+  const benchmarkReturn = activeBenchmarkValue > 0 ? activeBenchmarkValue / initialBenchmark - 1 : null;
+  const excessReturn = cumulativeReturn !== null && benchmarkReturn !== null
+    ? cumulativeReturn - benchmarkReturn
+    : null;
+  const activeCost = activePoint ? pointValueAtOrBefore(strategy.transaction_cost_curve, activePoint.date) : 0;
+  const drawdownToDate = activeIndex !== null
+    ? Math.min(...strategy.drawdown_curve.slice(0, activeIndex + 1).map((point) => point.value))
+    : null;
+  const activeSnapshot = activePoint
+    ? [...(strategy.holding_snapshots ?? [])]
+        .reverse()
+        .find((snapshot) => snapshot.date <= activePoint.date)
+    : null;
+  const activeHoldings = activeSnapshot?.holdings ?? [];
+  const visibleHoldings = activeHoldings.slice(0, 3);
+  const tooltipX = activeX > chartWidth - 228 ? activeX - 214 : activeX + 10;
+  const tooltipY = 0;
   return (
-    <svg className={`backtest-chart ${mode}`} viewBox="0 0 450 150" role="img" aria-label={`${strategy.strategy_name}${mode === "equity" ? "净值曲线" : "回撤曲线"}`}>
-      <line x1="20" y1="126" x2="430" y2="126" className="grid" />
-      <line x1="20" y1="76" x2="430" y2="76" className="grid" />
-      <path d={path} />
+    <svg
+      ref={svgRef}
+      className={`backtest-chart ${mode}`}
+      viewBox={`0 0 ${chartWidth} 150`}
+      role="img"
+      aria-label={`${strategy.strategy_name}${mode === "equity" ? "净值曲线" : "回撤曲线"}`}
+      tabIndex={0}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={() => setHoverIndex(null)}
+      onFocus={() => setHoverIndex(points.length - 1)}
+      onBlur={() => setHoverIndex(null)}
+    >
+      <line x1={chartLeft} y1="126" x2={chartRight} y2="126" className="grid" />
+      <line x1={chartLeft} y1="76" x2={chartRight} y2="76" className="grid" />
+      {benchmarkPath && <path className="benchmark-line" d={benchmarkPath} />}
+      <path className="strategy-line" d={path} />
+      {highlightSegments.map((segment, index) => (
+        <path className="holding-highlight-line" d={segment} key={`${highlightedStockCode}-${index}`} />
+      ))}
       {maxDrawdownPoint && (
         <g className="drawdown-marker">
           <line x1={markerX} y1="18" x2={markerX} y2="126" />
           <circle cx={markerX} cy={markerY} r="4.5" />
-          <text x={Math.min(Math.max(markerX, 64), 386)} y="28" textAnchor="middle">
+          <text x={Math.min(Math.max(markerX, 64), chartWidth - 64)} y="28" textAnchor="middle">
             最大回撤 {maxDrawdownPoint.date}
           </text>
         </g>
       )}
-      <text x="20" y="144">{points[0]?.date.slice(0, 4)}</text>
-      <text x="430" y="144" textAnchor="end">{points.at(-1)?.date.slice(0, 4)}</text>
+      {activePoint && activeEquity && activeDrawdown && cumulativeReturn !== null && drawdownToDate !== null && (
+        <g className="chart-crosshair">
+          <line x1={activeX} y1="18" x2={activeX} y2="126" />
+          <line x1={chartLeft} y1={activeY} x2={chartRight} y2={activeY} />
+          <circle cx={activeX} cy={activeY} r="4.5" />
+          <g className="chart-tooltip" transform={`translate(${tooltipX},${tooltipY})`}>
+            <rect width="204" height="150" rx="12" />
+            <path d="M12 24H192" />
+            <path d="M12 82H192" />
+            <text className="date" x="12" y="16">{activePoint.date}</text>
+            <text x="12" y="37">
+              <tspan>累计</tspan><tspan className="value" x="192" textAnchor="end">{pct(cumulativeReturn)}</tspan>
+            </text>
+            <text x="12" y="50">
+              <tspan>基准</tspan><tspan className="value benchmark-value" x="192" textAnchor="end">{benchmarkReturn !== null ? pct(benchmarkReturn) : "..."}</tspan>
+            </text>
+            <text x="12" y="63">
+              <tspan>超额</tspan><tspan className="value" x="192" textAnchor="end">{excessReturn !== null ? pct(excessReturn) : "..."}</tspan>
+            </text>
+            <text x="12" y="76">
+              <tspan>最大</tspan><tspan className="value" x="192" textAnchor="end">{drawdownPct(drawdownToDate)}</tspan>
+            </text>
+            <text x="12" y="89">
+              <tspan>成本</tspan><tspan className="value" x="192" textAnchor="end">{capitalMoney(activeCost)}</tspan>
+            </text>
+            <text className="holdings-title" x="12" y="108">
+              持仓 {activeSnapshot ? `${activeSnapshot.date} · ${activeHoldings.length}只` : "暂无快照"}
+            </text>
+            {visibleHoldings.map((holding, index) => {
+              const contribution = holdingContribution(strategy, holding.stock_code, activePoint.date);
+              return (
+                <text className="holding-row" x="12" y={122 + index * 11} key={holding.stock_code}>
+                  <tspan>{holding.stock_name}</tspan>
+                  <tspan className="muted" dx="4">{contribution.holdingDays}天</tspan>
+                  <tspan className="value" x="192" textAnchor="end">{capitalMoney(contribution.profit)}</tspan>
+                </text>
+              );
+            })}
+          </g>
+        </g>
+      )}
+      <rect className="chart-hit-zone" x={chartLeft} y="12" width={chartSpan} height="120" />
+      <text x={chartLeft} y="144">{points[0]?.date.slice(0, 4)}</text>
+      <text x={chartRight} y="144" textAnchor="end">{points.at(-1)?.date.slice(0, 4)}</text>
     </svg>
   );
 }
@@ -1465,20 +2108,163 @@ function BacktestPage({
   onRefresh: () => void;
   onPrepare: () => void;
 }) {
-  const [activeStrategy, setActiveStrategy] = useState<BacktestStrategyId>("income_core");
-  const active = backtest?.results.find((item) => item.strategy_id === activeStrategy) ?? backtest?.results[0] ?? null;
+  const [optimizing, setOptimizing] = useState(false);
+  const [optimizationError, setOptimizationError] = useState("");
+  const [optimizationOptions, setOptimizationOptions] = useState<BacktestOptimizationOption[]>([]);
+  const [savedPresets, setSavedPresets] = useState<SavedBacktestPreset[]>(readSavedBacktestPresets);
+  const [selectedSavedPresetId, setSelectedSavedPresetId] = useState("");
+  const [highlightedHoldingCode, setHighlightedHoldingCode] = useState("");
+  const [chartHeight, setChartHeight] = useState(() => {
+    const saved = Number(localStorage.getItem("bank-backtest-chart-height"));
+    return Number.isFinite(saved) && saved >= 160 && saved <= 260 ? saved : 190;
+  });
+  const active = backtest?.results.find((item) => item.strategy_id === "income_core") ?? backtest?.results[0] ?? null;
+  const activeHighlightedHolding = active?.current_holdings.find((item) => item.stock_code === highlightedHoldingCode)
+    ?? active?.current_holdings[0]
+    ?? null;
+  const weightTotal = backtestWeightTotal(query);
   const updateQuery = <K extends keyof StrategyBacktestQuery,>(key: K, value: StrategyBacktestQuery[K]) => {
+    setOptimizationError("");
+    setOptimizationOptions([]);
+    setSelectedSavedPresetId("");
     onQueryChange({ ...query, [key]: value });
   };
+  const updateWeight = (key: BacktestWeightKey, value: number) => {
+    setOptimizationError("");
+    setOptimizationOptions([]);
+    setSelectedSavedPresetId("");
+    onQueryChange({ ...query, ...rebalanceBacktestWeights(query, key, value) });
+  };
+  const updateBuyCostRate = (value: number) => {
+    setOptimizationError("");
+    setOptimizationOptions([]);
+    setSelectedSavedPresetId("");
+    onQueryChange({
+      ...query,
+      commission_rate: roundTo(Math.max(0, value), 6),
+      transfer_fee_rate: 0,
+      slippage_rate: 0,
+    });
+  };
+  useEffect(() => {
+    if (Math.abs(weightTotal - 1) <= 0.001) return;
+    onQueryChange({
+      ...query,
+      ...normalizeWeightPatch({
+        dividend_weight: query.dividend_weight,
+        safety_weight: query.safety_weight,
+        growth_weight: query.growth_weight,
+        valuation_weight: query.valuation_weight,
+        risk_penalty_weight: query.risk_penalty_weight,
+      }),
+    });
+  }, [weightTotal]);
   const isPresetActive = (preset: StrategyBacktestQuery) => (
     BACKTEST_PRESET_COMPARE_KEYS.every((key) => query[key] === preset[key])
   );
   const applyPreset = (preset: StrategyBacktestQuery) => {
+    setOptimizationError("");
+    setOptimizationOptions([]);
+    setSelectedSavedPresetId("");
     onRunWithQuery(preset);
+  };
+  const saveCurrentPreset = () => {
+    const preset: SavedBacktestPreset = {
+      id: `${Date.now()}`,
+      name: savedPresetName(),
+      createdAt: new Date().toISOString(),
+      query: normalizeBacktestQuery(query),
+    };
+    const next = [preset, ...savedPresets].slice(0, 20);
+    setSavedPresets(next);
+    setSelectedSavedPresetId(preset.id);
+    writeSavedBacktestPresets(next);
+  };
+  const applySavedPreset = (presetId: string) => {
+    setSelectedSavedPresetId(presetId);
+    const preset = savedPresets.find((item) => item.id === presetId);
+    if (!preset) return;
+    setOptimizationError("");
+    setOptimizationOptions([]);
+    onRunWithQuery(normalizeBacktestQuery(preset.query));
+  };
+  const deleteSelectedPreset = () => {
+    if (!selectedSavedPresetId) return;
+    const next = savedPresets.filter((item) => item.id !== selectedSavedPresetId);
+    setSavedPresets(next);
+    setSelectedSavedPresetId("");
+    writeSavedBacktestPresets(next);
+  };
+  const runOptimization = async () => {
+    setOptimizing(true);
+    setOptimizationError("");
+    setOptimizationOptions([]);
+    try {
+      const best = new Map<BacktestOptimizationGoal, BacktestOptimizationOption>();
+      let failures = 0;
+
+      for (const candidate of buildOptimizationCandidates(query)) {
+        try {
+          const response = await getStrategyBacktest(candidate.query);
+          const result = pickOptimizationResult(response, candidate.goal);
+          if (!result) {
+            failures += 1;
+            continue;
+          }
+          const meta = BACKTEST_OPTIMIZATION_META[candidate.goal];
+          const option: BacktestOptimizationOption = {
+            goal: candidate.goal,
+            label: meta.label,
+            note: meta.note,
+            query: candidate.query,
+            metrics: result.metrics,
+            strategyName: result.strategy_name,
+            score: scoreBacktestOption(candidate.goal, result.metrics),
+          };
+          const previous = best.get(candidate.goal);
+          if (!previous || option.score > previous.score) {
+            best.set(candidate.goal, option);
+          }
+        } catch {
+          failures += 1;
+        }
+      }
+
+      const ordered = (["defensive", "balanced", "income"] as BacktestOptimizationGoal[])
+        .map((goal) => best.get(goal))
+        .filter((item): item is BacktestOptimizationOption => Boolean(item));
+      setOptimizationOptions(ordered);
+      if (ordered.length === 0) {
+        setOptimizationError("暂时没有算出可用权重组，请先确认缓存/后端可用后再试。");
+      } else if (failures > 0) {
+        setOptimizationError(`有 ${failures} 组候选权重回测失败，已展示可用结果。`);
+      }
+    } finally {
+      setOptimizing(false);
+    }
   };
   const runLabel = query.start_date || query.end_date
     ? `${query.start_date || backtest?.start_date || "start"} 至 ${query.end_date || backtest?.end_date || "latest"}`
     : `${query.years}年 · ${BACKTEST_FREQUENCY_LABEL[query.rebalance_frequency]}`;
+  const activeStartValue = active?.equity_curve[0]?.value ?? query.initial_capital;
+  const activeEndValue = active?.equity_curve.at(-1)?.value ?? activeStartValue;
+  const activeProfit = activeEndValue - activeStartValue;
+  const activeTransactionCost = active?.metrics.total_transaction_cost
+    ?? pointValueAtOrBefore(active?.transaction_cost_curve, active?.equity_curve.at(-1)?.date ?? "")
+    ?? 0;
+  const buyCostRate = query.commission_rate + query.transfer_fee_rate + query.slippage_rate;
+  useEffect(() => {
+    localStorage.setItem("bank-backtest-chart-height", `${chartHeight}`);
+  }, [chartHeight]);
+  useEffect(() => {
+    if (!active?.current_holdings.length) {
+      setHighlightedHoldingCode("");
+      return;
+    }
+    if (!active.current_holdings.some((item) => item.stock_code === highlightedHoldingCode)) {
+      setHighlightedHoldingCode(active.current_holdings[0].stock_code);
+    }
+  }, [active?.strategy_id, active?.current_holdings.map((item) => item.stock_code).join("|"), highlightedHoldingCode]);
 
   return (
     <div className="backtest-page fade-in">
@@ -1489,10 +2275,10 @@ function BacktestPage({
           <p>{backtest ? `${backtest.start_date} 至 ${backtest.end_date}` : "等待回测结果"}</p>
         </div>
         <div className="reversion-actions">
-          <button className="refresh-button" type="button" onClick={onPrepare} disabled={loading || preparing}>
+          <button className="refresh-button" type="button" onClick={onPrepare} disabled={loading || preparing || optimizing}>
             {preparing ? "拉取中..." : "拉取缓存并重试"}
           </button>
-          <button className="refresh-button primary" type="button" onClick={onRefresh} disabled={loading || preparing}>
+          <button className="refresh-button primary" type="button" onClick={onRefresh} disabled={loading || preparing || optimizing}>
             {loading ? "回测中..." : "运行回测"}
           </button>
         </div>
@@ -1506,28 +2292,51 @@ function BacktestPage({
           <div className="backtest-presets">
             <button
               type="button"
-              className={isPresetActive(LOW_DRAWDOWN_BACKTEST_QUERY) ? "active" : ""}
-              onClick={() => applyPreset(LOW_DRAWDOWN_BACKTEST_QUERY)}
-              disabled={loading || preparing}
-            >
-              低回撤预设
-            </button>
-            <button
-              type="button"
-              className={isPresetActive(INCOME_PLUS_BACKTEST_QUERY) ? "active" : ""}
-              onClick={() => applyPreset(INCOME_PLUS_BACKTEST_QUERY)}
-              disabled={loading || preparing}
-            >
-              股息增强
-            </button>
-            <button
-              type="button"
               className={isPresetActive(DEFAULT_BACKTEST_QUERY) ? "active" : ""}
               onClick={() => applyPreset(DEFAULT_BACKTEST_QUERY)}
-              disabled={loading || preparing}
+              disabled={loading || preparing || optimizing}
             >
               默认
             </button>
+            <button
+              type="button"
+              className="optimizer-trigger"
+              onClick={() => void runOptimization()}
+              disabled={loading || preparing || optimizing}
+            >
+              {optimizing ? "计算中..." : "智能寻优"}
+            </button>
+            <button
+              type="button"
+              className="save-preset-button"
+              onClick={saveCurrentPreset}
+              disabled={loading || preparing || optimizing}
+            >
+              保存当前
+            </button>
+            <div className="saved-preset-controls">
+              <select
+                value={selectedSavedPresetId}
+                onChange={(event) => applySavedPreset(event.target.value)}
+                disabled={loading || preparing || optimizing || savedPresets.length === 0}
+              >
+                <option value="">{savedPresets.length ? "选择已存参数" : "暂无已存参数"}</option>
+                {savedPresets.map((preset) => (
+                  <option value={preset.id} key={preset.id}>{preset.name}</option>
+                ))}
+              </select>
+              {selectedSavedPresetId && (
+                <button
+                  type="button"
+                  className="delete-preset-button"
+                  onClick={deleteSelectedPreset}
+                  disabled={loading || preparing || optimizing}
+                  aria-label="删除已存参数"
+                >
+                  删除
+                </button>
+              )}
+            </div>
           </div>
         </div>
         <div className="backtest-control-grid">
@@ -1576,6 +2385,22 @@ function BacktestPage({
             <ParamLabel label="派息率上限" tooltip="派息率过高说明利润对分红覆盖不足。稳健股息策略常用 70%-85%；超过 100%通常要谨慎。" />
             <input type="number" min={0} max={150} step={1} value={(query.max_payout_ratio * 100).toFixed(0)} onChange={(event) => updateQuery("max_payout_ratio", Number(event.target.value) / 100)} />
           </label>
+          <label>
+            <ParamLabel label="初始资金(万)" tooltip="用于把净值收益换算成真实金额，比如填 100 表示初始资金 100 万。" />
+            <input type="number" min={1} max={100000} step={1} value={(query.initial_capital / 10000).toFixed(0)} onChange={(event) => updateQuery("initial_capital", Number(event.target.value) * 10000)} />
+          </label>
+          <label>
+            <ParamLabel label="买入成本率" tooltip="佣金、滑点、过户费等买入侧成本合计。填 0.03 表示 0.03%。" />
+            <input type="number" min={0} max={2} step={0.001} value={(buyCostRate * 100).toFixed(3)} onChange={(event) => updateBuyCostRate(Number(event.target.value) / 100)} />
+          </label>
+          <label>
+            <ParamLabel label="卖出印花税" tooltip="卖出侧印花税率。A 股常见口径可按实际费率手动调整。" />
+            <input type="number" min={0} max={2} step={0.001} value={(query.stamp_duty_rate * 100).toFixed(3)} onChange={(event) => updateQuery("stamp_duty_rate", Number(event.target.value) / 100)} />
+          </label>
+        </div>
+        <div className="weight-head">
+          <span>权重分配</span>
+          <b>总和 {weightTotal.toFixed(2)} / 1.00</b>
         </div>
         <div className="weight-grid">
           {BACKTEST_WEIGHT_FIELDS.map(([label, key, tooltip]) => (
@@ -1588,44 +2413,58 @@ function BacktestPage({
                 type="range"
                 min={0}
                 max={1}
-                step={0.05}
+                step={0.01}
                 value={query[key]}
-                onChange={(event) => updateQuery(key, Number(event.target.value))}
+                style={{ "--range-progress": `${query[key] * 100}%` } as CSSProperties}
+                onChange={(event) => updateWeight(key, Number(event.target.value))}
               />
             </label>
           ))}
         </div>
+        {(optimizing || optimizationOptions.length > 0 || optimizationError) && (
+          <div className="optimizer-panel">
+            <div className="optimizer-head">
+              <span>权重寻优</span>
+              <small>{optimizing ? "正在固定筛选条件，逐组回测权重..." : "筛选条件不变，仅给出 3 组权重参考"}</small>
+            </div>
+            {optimizationError && <p className="optimizer-error">{optimizationError}</p>}
+            <div className="optimizer-options">
+              {optimizationOptions.map((option) => (
+                <button
+                  type="button"
+                  key={option.goal}
+                  onClick={() => onRunWithQuery(option.query)}
+                  disabled={loading || preparing || optimizing}
+                >
+                  <b>{option.label}</b>
+                  <span>{option.note}</span>
+                  <strong>{pct(option.metrics.annualized_return)}</strong>
+                  <small>回撤 {pct(option.metrics.max_drawdown)} · 夏普 {option.metrics.sharpe?.toFixed(2) ?? "—"}</small>
+                  <i>
+                    股息 {option.query.dividend_weight.toFixed(2)} · 安全 {option.query.safety_weight.toFixed(2)} · 增长 {option.query.growth_weight.toFixed(2)} · 低估 {option.query.valuation_weight.toFixed(2)} · 风险 {option.query.risk_penalty_weight.toFixed(2)}
+                  </i>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
       {error && (
         <div className="error backtest-error">
           {error}
           <span>如果是缓存缺失，点击“拉取缓存并重试”会逐家刷新银行数据，完成后自动重新回测；如果提示无法连接后端，请先启动 8000 端口服务。</span>
-          <button type="button" onClick={onPrepare} disabled={loading || preparing}>
+          <button type="button" onClick={onPrepare} disabled={loading || preparing || optimizing}>
             {preparing ? "正在拉取缓存..." : "拉取缓存并重试"}
           </button>
         </div>
       )}
       {loading && !backtest && (
         <div className="loading reversion-loading">
-          <span /><span /><span /> 正在回测三套股息策略
+          <span /><span /><span /> 正在回测当前权重组合
         </div>
       )}
       {backtest && (
         <>
-          <section className="backtest-summary">
-            {backtest.results.map((strategy) => (
-              <button
-                type="button"
-                className={`${BACKTEST_TONE[strategy.strategy_id]} ${active?.strategy_id === strategy.strategy_id ? "active" : ""}`}
-                onClick={() => setActiveStrategy(strategy.strategy_id)}
-                key={strategy.strategy_id}
-              >
-                <span>{strategy.strategy_name}</span>
-                <b>{pct(strategy.metrics.annualized_return)}</b>
-                <small>最大回撤 {pct(strategy.metrics.max_drawdown)}</small>
-              </button>
-            ))}
-          </section>
           {active && (
             <>
               <section className="card backtest-detail">
@@ -1637,6 +2476,19 @@ function BacktestPage({
                   <span className="pill">{runLabel}</span>
                 </div>
                 <p className="backtest-description">{active.description}</p>
+                <div className="chart-size-control">
+                  <span>图高</span>
+                  <input
+                    type="range"
+                    min={160}
+                    max={260}
+                    step={10}
+                    value={chartHeight}
+                    onChange={(event) => setChartHeight(Number(event.target.value))}
+                    aria-label="调整图表高度"
+                  />
+                  <b>{chartHeight}px</b>
+                </div>
                 <div className="backtest-metrics">
                   <span>累计收益 <b>{pct(active.metrics.total_return)}</b></span>
                   <span>年化收益 <b>{pct(active.metrics.annualized_return)}</b></span>
@@ -1646,11 +2498,32 @@ function BacktestPage({
                   <span>夏普 <b>{active.metrics.sharpe?.toFixed(2) ?? "—"}</b></span>
                   <span>胜率 <b>{purePct(active.metrics.win_year_rate)}</b></span>
                   <span>年化股息贡献 <b>{purePct(active.metrics.annual_dividend_return)}</b></span>
+                  <span>初始资金 <b>{capitalMoney(activeStartValue)}</b></span>
+                  <span>期末资产 <b>{capitalMoney(activeEndValue)}</b></span>
+                  <span>利润金额 <b>{capitalMoney(activeProfit)}</b></span>
+                  <span>交易成本 <b>{capitalMoney(activeTransactionCost)}</b></span>
                 </div>
-                <div className="backtest-charts">
+                <div
+                  className="backtest-charts"
+                  style={{ "--backtest-chart-height": `${chartHeight}px` } as CSSProperties}
+                >
                   <div>
-                    <span>净值曲线</span>
-                    <BacktestLineChart strategy={active} mode="equity" />
+                    <span className="chart-title-row">
+                      <span>
+                        净值曲线
+                        {activeHighlightedHolding && <b> · 高亮 {activeHighlightedHolding.stock_name}</b>}
+                      </span>
+                      <span className="chart-legend">
+                        <i className="strategy-dot" />策略
+                        <i className="benchmark-dot" />银行等权基准
+                      </span>
+                    </span>
+                    <BacktestLineChart
+                      strategy={active}
+                      mode="equity"
+                      highlightedStockCode={activeHighlightedHolding?.stock_code}
+                      benchmarkPoints={backtest.benchmark_curve}
+                    />
                   </div>
                   <div>
                     <span>回撤曲线</span>
@@ -1676,14 +2549,28 @@ function BacktestPage({
                     <h2>当前组合</h2>
                   </div>
                   <div className="holding-list">
-                    {active.current_holdings.map((item) => (
-                      <div key={item.stock_code}>
-                        <b>{item.stock_name}</b>
-                        <span>{item.stock_code}</span>
-                        <strong>{purePct(item.weight)}</strong>
-                        <small>股息 {purePct(item.dividend_yield)} · 风险 {item.risk_score.toFixed(1)}</small>
-                      </div>
-                    ))}
+                    {active.current_holdings.map((item) => {
+                      const contribution = holdingContribution(
+                        active,
+                        item.stock_code,
+                        active.equity_curve.at(-1)?.date ?? "",
+                      );
+                      return (
+                        <button
+                          type="button"
+                          className={activeHighlightedHolding?.stock_code === item.stock_code ? "active" : ""}
+                          key={item.stock_code}
+                          onClick={() => setHighlightedHoldingCode(item.stock_code)}
+                        >
+                          <b>{item.stock_name}</b>
+                          <span>{item.stock_code}</span>
+                          <strong>{purePct(item.weight)}</strong>
+                          <small>
+                            持仓 {contribution.holdingDays}天 · 贡献 {capitalMoney(contribution.profit)} · 股息 {purePct(item.dividend_yield)} · 风险 {item.risk_score.toFixed(1)}
+                          </small>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </section>
