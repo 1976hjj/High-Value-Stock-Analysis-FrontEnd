@@ -1855,35 +1855,19 @@ const holdingEntryDate = (strategy: StrategyBacktestResult, stockCode: string, d
   return inPosition ? entryDate : null;
 };
 
-const contributionByHolding = (strategy: StrategyBacktestResult, date: string) => {
-  const contributions = new Map<string, number>();
-  const points = strategy.equity_curve.filter((point) => point.date <= date);
-  for (let index = 1; index < points.length; index += 1) {
-    const previous = points[index - 1];
-    const current = points[index];
-    const snapshot = snapshotAtOrBefore(strategy, previous.date);
-    if (!snapshot) continue;
-    const change = current.value - previous.value;
-    snapshot.holdings.forEach((holding) => {
-      contributions.set(
-        holding.stock_code,
-        (contributions.get(holding.stock_code) ?? 0) + change * holding.weight,
-      );
-    });
-  }
-  return contributions;
-};
-
 const holdingContribution = (
   strategy: StrategyBacktestResult,
   stockCode: string,
   date: string,
 ): HoldingContribution => {
-  const entryDate = holdingEntryDate(strategy, stockCode, date);
+  const snapshotHolding = snapshotAtOrBefore(strategy, date)?.holdings.find(
+    (holding) => holding.stock_code === stockCode,
+  );
+  const entryDate = snapshotHolding?.entry_date ?? holdingEntryDate(strategy, stockCode, date);
   return {
     entryDate,
-    holdingDays: entryDate ? daysBetween(entryDate, date) : 0,
-    profit: contributionByHolding(strategy, date).get(stockCode) ?? 0,
+    holdingDays: snapshotHolding?.holding_days ?? (entryDate ? daysBetween(entryDate, date) : 0),
+    profit: snapshotHolding?.profit ?? 0,
   };
 };
 
@@ -1947,6 +1931,72 @@ function ParamLabel({ label, tooltip }: { label: string; tooltip: string }) {
       {label}
       <i className="help-dot" data-tooltip={tooltip}>?</i>
     </span>
+  );
+}
+
+function NumberStepper({
+  value,
+  min,
+  max,
+  step = 1,
+  decimals = 0,
+  onChange,
+  ariaLabel,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  decimals?: number;
+  onChange: (value: number) => void;
+  ariaLabel: string;
+}) {
+  const normalized = clamp(value, min, max);
+  const format = (item: number) => (decimals > 0 ? item.toFixed(decimals) : `${Math.round(item)}`);
+  const [draft, setDraft] = useState(format(normalized));
+  useEffect(() => {
+    setDraft(format(normalized));
+  }, [normalized, decimals]);
+  const commit = (next: number) => {
+    if (!Number.isFinite(next)) return;
+    const committed = roundTo(clamp(next, min, max), decimals);
+    setDraft(format(committed));
+    onChange(committed);
+  };
+
+  return (
+    <div className="number-stepper">
+      <button
+        type="button"
+        onClick={() => commit(normalized - step)}
+        disabled={normalized <= min}
+        aria-label={`${ariaLabel} 减少`}
+      >
+        -
+      </button>
+      <input
+        inputMode={decimals > 0 ? "decimal" : "numeric"}
+        value={draft}
+        onFocus={selectNumericInput}
+        onInput={trimIntegerLeadingZeros}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => commit(Number(draft))}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          }
+        }}
+        aria-label={ariaLabel}
+      />
+      <button
+        type="button"
+        onClick={() => commit(normalized + step)}
+        disabled={normalized >= max}
+        aria-label={`${ariaLabel} 增加`}
+      >
+        +
+      </button>
+    </div>
   );
 }
 
@@ -2048,7 +2098,9 @@ function BacktestLineChart({
         .find((snapshot) => snapshot.date <= activePoint.date)
     : null;
   const activeHoldings = activeSnapshot?.holdings ?? [];
-  const visibleHoldings = activeHoldings.slice(0, 3);
+  const tooltipHoldingStartY = 122;
+  const tooltipHoldingRowGap = 11;
+  const tooltipHeight = Math.max(150, tooltipHoldingStartY + Math.max(activeHoldings.length, 1) * tooltipHoldingRowGap + 8);
   const tooltipX = activeX > chartWidth - 228 ? activeX - 214 : activeX + 10;
   const tooltipY = 0;
   return (
@@ -2086,9 +2138,9 @@ function BacktestLineChart({
           <line x1={chartLeft} y1={activeY} x2={chartRight} y2={activeY} />
           <circle cx={activeX} cy={activeY} r="4.5" />
           <g className="chart-tooltip" transform={`translate(${tooltipX},${tooltipY})`}>
-            <rect width="204" height="150" rx="12" />
-            <path d="M12 24H192" />
-            <path d="M12 82H192" />
+            <rect width="204" height={tooltipHeight} rx="12" />
+            <line className="tooltip-divider" x1="12" y1="24" x2="192" y2="24" />
+            <line className="tooltip-divider subtle" x1="12" y1="96" x2="192" y2="96" />
             <text className="date" x="12" y="16">{activePoint.date}</text>
             <text x="12" y="37">
               <tspan>累计</tspan><tspan className="value" x="192" textAnchor="end">{pct(cumulativeReturn)}</tspan>
@@ -2108,10 +2160,10 @@ function BacktestLineChart({
             <text className="holdings-title" x="12" y="108">
               持仓 {activeSnapshot ? `${activeSnapshot.date} · ${activeHoldings.length}只` : "暂无快照"}
             </text>
-            {visibleHoldings.map((holding, index) => {
+            {activeHoldings.map((holding, index) => {
               const contribution = holdingContribution(strategy, holding.stock_code, activePoint.date);
               return (
-                <text className="holding-row" x="12" y={122 + index * 11} key={holding.stock_code}>
+                <text className="holding-row" x="12" y={tooltipHoldingStartY + index * tooltipHoldingRowGap} key={holding.stock_code}>
                   <tspan>{holding.stock_name}</tspan>
                   <tspan className="muted" dx="4">{contribution.holdingDays}天</tspan>
                   <tspan className="value" x="192" textAnchor="end">{capitalMoney(contribution.profit)}</tspan>
@@ -2299,10 +2351,6 @@ function BacktestPage({
     ?? 0;
   const buyCostRate = query.commission_rate + query.transfer_fee_rate + query.slippage_rate;
   const dateRangeError = validateBacktestDateRange(query);
-  const numberInputProps = {
-    onFocus: selectNumericInput,
-    onInput: trimIntegerLeadingZeros,
-  };
   useEffect(() => {
     localStorage.setItem("bank-backtest-chart-height", `${chartHeight}`);
   }, [chartHeight]);
@@ -2400,7 +2448,7 @@ function BacktestPage({
           </label>
           <label>
             <ParamLabel label="未选日期时年数" tooltip="开始/结束日期为空时使用最近 N 年。建议先看 10 年，再分别看 3 年、5 年，确认策略不是只适合某一段行情。" />
-            <input {...numberInputProps} type="number" min={3} max={15} value={query.years} onChange={(event) => updateQuery("years", Number(event.target.value))} />
+            <NumberStepper ariaLabel="未选日期时年数" min={3} max={15} value={query.years} onChange={(value) => updateQuery("years", value)} />
           </label>
           <label>
             <ParamLabel label="调仓频率" tooltip="调仓越频繁越灵敏，但交易成本和换手也更高。银行股高股息策略通常先用每季；想更稳可试半年。" />
@@ -2413,39 +2461,39 @@ function BacktestPage({
           </label>
           <label>
             <ParamLabel label="持仓数量" tooltip="组合持有几只银行。数量少更集中、波动可能更大；8-12 只通常较平衡，低回撤可偏 10-15。" />
-            <input {...numberInputProps} type="number" min={3} max={20} value={query.holding_count} onChange={(event) => updateQuery("holding_count", Number(event.target.value))} />
+            <NumberStepper ariaLabel="持仓数量" min={3} max={20} value={query.holding_count} onChange={(value) => updateQuery("holding_count", value)} />
           </label>
           <label>
             <ParamLabel label="最低股息率" tooltip="低于该股息率的银行会被排除。3%-4%适合稳健筛选；设太高容易只剩高息但基本面承压的股票。" />
-            <input {...numberInputProps} type="number" min={0} max={20} step={0.1} value={(query.min_dividend_yield * 100).toFixed(1)} onChange={(event) => updateQuery("min_dividend_yield", Number(event.target.value) / 100)} />
+            <NumberStepper ariaLabel="最低股息率" min={0} max={20} step={0.1} decimals={1} value={query.min_dividend_yield * 100} onChange={(value) => updateQuery("min_dividend_yield", value / 100)} />
           </label>
           <label>
             <ParamLabel label="股息安全分" tooltip="衡量分红可持续性，越高越严格。追求低回撤可设 60-70；想扩大候选池可降到 50-55。" />
-            <input {...numberInputProps} type="number" min={0} max={100} value={query.min_dividend_safety} onChange={(event) => updateQuery("min_dividend_safety", Number(event.target.value))} />
+            <NumberStepper ariaLabel="股息安全分" min={0} max={100} value={query.min_dividend_safety} onChange={(value) => updateQuery("min_dividend_safety", value)} />
           </label>
           <label>
             <ParamLabel label="稳定增长分" tooltip="衡量利润、ROE 等稳定程度。设高可避开利润转弱银行；如果市场整体承压，过高会导致候选不足。" />
-            <input {...numberInputProps} type="number" min={0} max={100} value={query.min_stable_growth} onChange={(event) => updateQuery("min_stable_growth", Number(event.target.value))} />
+            <NumberStepper ariaLabel="稳定增长分" min={0} max={100} value={query.min_stable_growth} onChange={(value) => updateQuery("min_stable_growth", value)} />
           </label>
           <label>
             <ParamLabel label="最高风险分" tooltip="风险分高于该值会被剔除。低回撤建议 30-40；如果想提高收益弹性，可放宽到 45-50 后观察回撤是否明显变差。" />
-            <input {...numberInputProps} type="number" min={0} max={100} value={query.max_risk_score} onChange={(event) => updateQuery("max_risk_score", Number(event.target.value))} />
+            <NumberStepper ariaLabel="最高风险分" min={0} max={100} value={query.max_risk_score} onChange={(value) => updateQuery("max_risk_score", value)} />
           </label>
           <label>
             <ParamLabel label="派息率上限" tooltip="派息率过高说明利润对分红覆盖不足。稳健股息策略常用 70%-85%；超过 100%通常要谨慎。" />
-            <input {...numberInputProps} type="number" min={0} max={150} step={1} value={(query.max_payout_ratio * 100).toFixed(0)} onChange={(event) => updateQuery("max_payout_ratio", Number(event.target.value) / 100)} />
+            <NumberStepper ariaLabel="派息率上限" min={0} max={150} value={query.max_payout_ratio * 100} onChange={(value) => updateQuery("max_payout_ratio", value / 100)} />
           </label>
           <label>
             <ParamLabel label="初始资金(万)" tooltip="用于把净值收益换算成真实金额，比如填 100 表示初始资金 100 万。" />
-            <input {...numberInputProps} type="number" min={1} max={100000} step={1} value={(query.initial_capital / 10000).toFixed(0)} onChange={(event) => updateQuery("initial_capital", Number(event.target.value) * 10000)} />
+            <NumberStepper ariaLabel="初始资金万元" min={1} max={100000} value={query.initial_capital / 10000} onChange={(value) => updateQuery("initial_capital", value * 10000)} />
           </label>
           <label>
             <ParamLabel label="买入成本率" tooltip="佣金、滑点、过户费等买入侧成本合计。填 0.03 表示 0.03%。" />
-            <input {...numberInputProps} type="number" min={0} max={2} step={0.001} value={(buyCostRate * 100).toFixed(3)} onChange={(event) => updateBuyCostRate(Number(event.target.value) / 100)} />
+            <NumberStepper ariaLabel="买入成本率" min={0} max={2} step={0.001} decimals={3} value={buyCostRate * 100} onChange={(value) => updateBuyCostRate(value / 100)} />
           </label>
           <label>
             <ParamLabel label="卖出印花税" tooltip="卖出侧印花税率。A 股常见口径可按实际费率手动调整。" />
-            <input {...numberInputProps} type="number" min={0} max={2} step={0.001} value={(query.stamp_duty_rate * 100).toFixed(3)} onChange={(event) => updateQuery("stamp_duty_rate", Number(event.target.value) / 100)} />
+            <NumberStepper ariaLabel="卖出印花税" min={0} max={2} step={0.001} decimals={3} value={query.stamp_duty_rate * 100} onChange={(value) => updateQuery("stamp_duty_rate", value / 100)} />
           </label>
         </div>
         {dateRangeError && <p className="backtest-inline-error">{dateRangeError}</p>}

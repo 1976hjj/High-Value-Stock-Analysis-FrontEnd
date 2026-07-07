@@ -201,6 +201,9 @@ export interface BacktestHolding {
   score: number;
   dividend_yield: number;
   risk_score: number;
+  entry_date?: string | null;
+  holding_days?: number;
+  profit?: number;
 }
 
 export interface StrategyBacktestResult {
