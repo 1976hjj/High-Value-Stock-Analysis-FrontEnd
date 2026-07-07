@@ -1,4 +1,4 @@
-import { type CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type FocusEvent as ReactFocusEvent, type FormEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   getIndustryBenchmark,
   getMeanReversionOverview,
@@ -1620,6 +1620,37 @@ const normalizeBacktestQuery = (query: StrategyBacktestQuery): StrategyBacktestQ
   }),
 });
 
+const MIN_BACKTEST_CALENDAR_DAYS = 170;
+
+const parseDateOnly = (value: string | null | undefined) => {
+  if (!value) return null;
+  const timestamp = Date.parse(`${value}T00:00:00`);
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
+const validateBacktestDateRange = (query: StrategyBacktestQuery) => {
+  const start = parseDateOnly(query.start_date);
+  const end = parseDateOnly(query.end_date);
+  if (start === null || end === null) return "";
+  if (end < start) return "结束日期不能早于开始日期";
+  const calendarDays = Math.floor((end - start) / 86_400_000) + 1;
+  if (calendarDays < MIN_BACKTEST_CALENDAR_DAYS) {
+    return "回测区间太短，至少选择约 6 个月（后端最低 120 个交易日），否则样本不足容易误判";
+  }
+  return "";
+};
+
+const selectNumericInput = (event: ReactFocusEvent<HTMLInputElement>) => {
+  event.currentTarget.select();
+};
+
+const trimIntegerLeadingZeros = (event: FormEvent<HTMLInputElement>) => {
+  const input = event.currentTarget;
+  if (input.step && input.step !== "1") return;
+  if (!/^0\d+$/.test(input.value)) return;
+  input.value = String(Number(input.value));
+};
+
 const backtestQueryKey = (query: StrategyBacktestQuery) =>
   JSON.stringify({
     years: query.years,
@@ -2206,6 +2237,10 @@ function BacktestPage({
     writeSavedBacktestPresets(next);
   };
   const runOptimization = async () => {
+    if (dateRangeError) {
+      setOptimizationError(dateRangeError);
+      return;
+    }
     setOptimizing(true);
     setOptimizationError("");
     setOptimizationOptions([]);
@@ -2263,6 +2298,11 @@ function BacktestPage({
     ?? pointValueAtOrBefore(active?.transaction_cost_curve, active?.equity_curve.at(-1)?.date ?? "")
     ?? 0;
   const buyCostRate = query.commission_rate + query.transfer_fee_rate + query.slippage_rate;
+  const dateRangeError = validateBacktestDateRange(query);
+  const numberInputProps = {
+    onFocus: selectNumericInput,
+    onInput: trimIntegerLeadingZeros,
+  };
   useEffect(() => {
     localStorage.setItem("bank-backtest-chart-height", `${chartHeight}`);
   }, [chartHeight]);
@@ -2285,10 +2325,10 @@ function BacktestPage({
           <p>{backtest ? `${backtest.start_date} 至 ${backtest.end_date}` : "等待回测结果"}</p>
         </div>
         <div className="reversion-actions">
-          <button className="refresh-button" type="button" onClick={onPrepare} disabled={loading || preparing || optimizing}>
+          <button className="refresh-button" type="button" onClick={onPrepare} disabled={loading || preparing || optimizing || Boolean(dateRangeError)}>
             {preparing ? "拉取中..." : "拉取缓存并重试"}
           </button>
-          <button className="refresh-button primary" type="button" onClick={onRefresh} disabled={loading || preparing || optimizing}>
+          <button className="refresh-button primary" type="button" onClick={onRefresh} disabled={loading || preparing || optimizing || Boolean(dateRangeError)}>
             {loading ? "回测中..." : "运行回测"}
           </button>
         </div>
@@ -2312,7 +2352,7 @@ function BacktestPage({
               type="button"
               className="optimizer-trigger"
               onClick={() => void runOptimization()}
-              disabled={loading || preparing || optimizing}
+              disabled={loading || preparing || optimizing || Boolean(dateRangeError)}
             >
               {optimizing ? "计算中..." : "智能寻优"}
             </button>
@@ -2352,15 +2392,15 @@ function BacktestPage({
         <div className="backtest-control-grid">
           <label>
             <ParamLabel label="开始日期" tooltip="回测起点。建议至少覆盖一轮完整牛熊周期；做 10 年稳定性测试时可从 2016 年附近开始。" />
-            <input type="date" value={query.start_date ?? ""} onChange={(event) => updateQuery("start_date", event.target.value || null)} />
+            <input className={dateRangeError ? "invalid" : ""} type="date" max={query.end_date ?? undefined} value={query.start_date ?? ""} onChange={(event) => updateQuery("start_date", event.target.value || null)} />
           </label>
           <label>
             <ParamLabel label="结束日期" tooltip="回测终点。通常用最新交易日；想检验某段行情，比如 2020-2022 或 2023-至今，可以手动截断。" />
-            <input type="date" value={query.end_date ?? ""} onChange={(event) => updateQuery("end_date", event.target.value || null)} />
+            <input className={dateRangeError ? "invalid" : ""} type="date" min={query.start_date ?? undefined} value={query.end_date ?? ""} onChange={(event) => updateQuery("end_date", event.target.value || null)} />
           </label>
           <label>
             <ParamLabel label="未选日期时年数" tooltip="开始/结束日期为空时使用最近 N 年。建议先看 10 年，再分别看 3 年、5 年，确认策略不是只适合某一段行情。" />
-            <input type="number" min={3} max={15} value={query.years} onChange={(event) => updateQuery("years", Number(event.target.value))} />
+            <input {...numberInputProps} type="number" min={3} max={15} value={query.years} onChange={(event) => updateQuery("years", Number(event.target.value))} />
           </label>
           <label>
             <ParamLabel label="调仓频率" tooltip="调仓越频繁越灵敏，但交易成本和换手也更高。银行股高股息策略通常先用每季；想更稳可试半年。" />
@@ -2373,41 +2413,42 @@ function BacktestPage({
           </label>
           <label>
             <ParamLabel label="持仓数量" tooltip="组合持有几只银行。数量少更集中、波动可能更大；8-12 只通常较平衡，低回撤可偏 10-15。" />
-            <input type="number" min={3} max={20} value={query.holding_count} onChange={(event) => updateQuery("holding_count", Number(event.target.value))} />
+            <input {...numberInputProps} type="number" min={3} max={20} value={query.holding_count} onChange={(event) => updateQuery("holding_count", Number(event.target.value))} />
           </label>
           <label>
             <ParamLabel label="最低股息率" tooltip="低于该股息率的银行会被排除。3%-4%适合稳健筛选；设太高容易只剩高息但基本面承压的股票。" />
-            <input type="number" min={0} max={20} step={0.1} value={(query.min_dividend_yield * 100).toFixed(1)} onChange={(event) => updateQuery("min_dividend_yield", Number(event.target.value) / 100)} />
+            <input {...numberInputProps} type="number" min={0} max={20} step={0.1} value={(query.min_dividend_yield * 100).toFixed(1)} onChange={(event) => updateQuery("min_dividend_yield", Number(event.target.value) / 100)} />
           </label>
           <label>
             <ParamLabel label="股息安全分" tooltip="衡量分红可持续性，越高越严格。追求低回撤可设 60-70；想扩大候选池可降到 50-55。" />
-            <input type="number" min={0} max={100} value={query.min_dividend_safety} onChange={(event) => updateQuery("min_dividend_safety", Number(event.target.value))} />
+            <input {...numberInputProps} type="number" min={0} max={100} value={query.min_dividend_safety} onChange={(event) => updateQuery("min_dividend_safety", Number(event.target.value))} />
           </label>
           <label>
             <ParamLabel label="稳定增长分" tooltip="衡量利润、ROE 等稳定程度。设高可避开利润转弱银行；如果市场整体承压，过高会导致候选不足。" />
-            <input type="number" min={0} max={100} value={query.min_stable_growth} onChange={(event) => updateQuery("min_stable_growth", Number(event.target.value))} />
+            <input {...numberInputProps} type="number" min={0} max={100} value={query.min_stable_growth} onChange={(event) => updateQuery("min_stable_growth", Number(event.target.value))} />
           </label>
           <label>
             <ParamLabel label="最高风险分" tooltip="风险分高于该值会被剔除。低回撤建议 30-40；如果想提高收益弹性，可放宽到 45-50 后观察回撤是否明显变差。" />
-            <input type="number" min={0} max={100} value={query.max_risk_score} onChange={(event) => updateQuery("max_risk_score", Number(event.target.value))} />
+            <input {...numberInputProps} type="number" min={0} max={100} value={query.max_risk_score} onChange={(event) => updateQuery("max_risk_score", Number(event.target.value))} />
           </label>
           <label>
             <ParamLabel label="派息率上限" tooltip="派息率过高说明利润对分红覆盖不足。稳健股息策略常用 70%-85%；超过 100%通常要谨慎。" />
-            <input type="number" min={0} max={150} step={1} value={(query.max_payout_ratio * 100).toFixed(0)} onChange={(event) => updateQuery("max_payout_ratio", Number(event.target.value) / 100)} />
+            <input {...numberInputProps} type="number" min={0} max={150} step={1} value={(query.max_payout_ratio * 100).toFixed(0)} onChange={(event) => updateQuery("max_payout_ratio", Number(event.target.value) / 100)} />
           </label>
           <label>
             <ParamLabel label="初始资金(万)" tooltip="用于把净值收益换算成真实金额，比如填 100 表示初始资金 100 万。" />
-            <input type="number" min={1} max={100000} step={1} value={(query.initial_capital / 10000).toFixed(0)} onChange={(event) => updateQuery("initial_capital", Number(event.target.value) * 10000)} />
+            <input {...numberInputProps} type="number" min={1} max={100000} step={1} value={(query.initial_capital / 10000).toFixed(0)} onChange={(event) => updateQuery("initial_capital", Number(event.target.value) * 10000)} />
           </label>
           <label>
             <ParamLabel label="买入成本率" tooltip="佣金、滑点、过户费等买入侧成本合计。填 0.03 表示 0.03%。" />
-            <input type="number" min={0} max={2} step={0.001} value={(buyCostRate * 100).toFixed(3)} onChange={(event) => updateBuyCostRate(Number(event.target.value) / 100)} />
+            <input {...numberInputProps} type="number" min={0} max={2} step={0.001} value={(buyCostRate * 100).toFixed(3)} onChange={(event) => updateBuyCostRate(Number(event.target.value) / 100)} />
           </label>
           <label>
             <ParamLabel label="卖出印花税" tooltip="卖出侧印花税率。A 股常见口径可按实际费率手动调整。" />
-            <input type="number" min={0} max={2} step={0.001} value={(query.stamp_duty_rate * 100).toFixed(3)} onChange={(event) => updateQuery("stamp_duty_rate", Number(event.target.value) / 100)} />
+            <input {...numberInputProps} type="number" min={0} max={2} step={0.001} value={(query.stamp_duty_rate * 100).toFixed(3)} onChange={(event) => updateQuery("stamp_duty_rate", Number(event.target.value) / 100)} />
           </label>
         </div>
+        {dateRangeError && <p className="backtest-inline-error">{dateRangeError}</p>}
         <div className="weight-head">
           <span>权重分配</span>
           <b>总和 {weightTotal.toFixed(2)} / 1.00</b>
@@ -2654,6 +2695,11 @@ export default function App() {
     /缓存|cache|快照|本地|历史不足|生成缓存/i.test(message);
 
   async function prepareBacktestData(params = backtestQuery) {
+    const validationError = validateBacktestDateRange(params);
+    if (validationError) {
+      setBacktestError(validationError);
+      return;
+    }
     setBacktestPreparing(true);
     setBacktestError("");
     try {
@@ -2669,6 +2715,11 @@ export default function App() {
   }
 
   async function loadBacktest(params = backtestQuery, allowAutoPrepare = true) {
+    const validationError = validateBacktestDateRange(params);
+    if (validationError) {
+      setBacktestError(validationError);
+      return;
+    }
     setBacktestLoading(true);
     setBacktestError("");
     try {
