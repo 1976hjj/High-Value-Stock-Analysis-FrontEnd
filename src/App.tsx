@@ -330,16 +330,21 @@ function Particles() {
 }
 
 function PriceBand({ result }: { result: ValuationResult }) {
+  const scenarioNames = ["bull", "base", "bear", "crisis"] as ScenarioName[];
   const values = [
-    result.scenarios.crisis.price_range[0],
-    result.scenarios.crisis.price_range[1],
     result.current_price,
-    result.scenarios.base.price_range[1],
-    result.scenarios.bull.price_range[1],
+    ...scenarioNames.flatMap((name) => result.scenarios[name].price_range),
   ];
-  const min = Math.min(...values) * 0.88;
-  const max = Math.max(...values) * 1.08;
-  const x = (value: number) => `${((value - min) / (max - min)) * 100}%`;
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const padding = Math.max((rawMax - rawMin) * 0.08, rawMax * 0.02, 1);
+  const min = Math.max(0, rawMin - padding);
+  const max = rawMax + padding;
+  const toPercent = (value: number) => {
+    if (max <= min) return 50;
+    return Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
+  };
+  const x = (value: number) => `${toPercent(value).toFixed(3)}%`;
   return (
     <section className="card price-band">
       <div className="section-heading">
@@ -349,33 +354,38 @@ function PriceBand({ result }: { result: ValuationResult }) {
         </div>
         <span className="quiet">单位：元 / 股</span>
       </div>
-      <div className="axis">
-        <span>{money(min)}</span>
-        <span>{money(max)}</span>
-      </div>
-      {(["bull", "base", "bear", "crisis"] as ScenarioName[]).map((name) => {
-        const [low, high] = result.scenarios[name].price_range;
-        return (
-          <div className={`band-row ${name}`} key={name}>
-            <div className="band-label">{SCENARIO_META[name].label}</div>
-            <div className="band-track">
-              <div
-                className="band-fill"
-                style={{ left: x(low), width: `calc(${x(high)} - ${x(low)})` }}
-              />
-              <span className="band-value low" style={{ left: x(low) }}>
-                {low.toFixed(2)}
-              </span>
-              <span className="band-value high" style={{ left: x(high) }}>
-                {high.toFixed(2)}
-              </span>
+      <div className="price-band-chart">
+        <div className="axis price-axis">
+          <span>{money(min)}</span>
+          <span>{money(max)}</span>
+        </div>
+        {scenarioNames.map((name) => {
+          const [low, high] = result.scenarios[name].price_range;
+          const width = Math.max(0.8, toPercent(high) - toPercent(low));
+          return (
+            <div className={`band-row ${name}`} key={name}>
+              <div className="band-label">{SCENARIO_META[name].label}</div>
+              <div className="band-track">
+                <div
+                  className="band-fill"
+                  style={{ left: x(low), width: `${width.toFixed(3)}%` }}
+                />
+                <span className="band-value low" style={{ left: x(low) }}>
+                  {low.toFixed(2)}
+                </span>
+                <span className="band-value high" style={{ left: x(high) }}>
+                  {high.toFixed(2)}
+                </span>
+              </div>
             </div>
+          );
+        })}
+        <div className="current-pin-layer">
+          <div className="current-pin" style={{ left: x(result.current_price) }}>
+            <span>当前</span>
+            <b>{money(result.current_price)}</b>
           </div>
-        );
-      })}
-      <div className="current-pin" style={{ left: x(result.current_price) }}>
-        <span>当前</span>
-        <b>{money(result.current_price)}</b>
+        </div>
       </div>
     </section>
   );
