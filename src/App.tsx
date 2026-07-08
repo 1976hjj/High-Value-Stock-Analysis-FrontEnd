@@ -2088,11 +2088,17 @@ function BacktestLineChart({
   const values = [...points.map((point) => point.value), ...benchmarkSeries.map((point) => point.value)];
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const chartLeft = 20;
+  const chartLeft = mode === "equity" ? 64 : 54;
   const chartRight = chartWidth - 20;
   const chartSpan = chartRight - chartLeft;
   const y = (value: number) => 126 - ((value - min) / (max - min || 1)) * 100;
   const x = (index: number) => chartLeft + (index / Math.max(points.length - 1, 1)) * chartSpan;
+  const yTicks = [max, (max + min) / 2, min].map((value, index) => ({
+    index,
+    value,
+    y: y(value),
+    label: mode === "equity" ? capitalMoney(value) : drawdownPct(value),
+  }));
   const path = points.map((point, index) => `${index === 0 ? "M" : "L"}${x(index).toFixed(2)},${y(point.value).toFixed(2)}`).join(" ");
   const benchmarkPath = benchmarkSeries
     .map((point, index) => `${index === 0 ? "M" : "L"}${x(point.index).toFixed(2)},${y(point.value).toFixed(2)}`)
@@ -2118,6 +2124,7 @@ function BacktestLineChart({
   const maxDrawdownPoint = maxDrawdownIndex >= 0 ? points[maxDrawdownIndex] : null;
   const markerX = maxDrawdownIndex >= 0 ? x(maxDrawdownIndex) : 0;
   const markerY = maxDrawdownPoint ? y(maxDrawdownPoint.value) : 0;
+  const markerLabelX = Math.min(Math.max(markerX, 82), chartWidth - 82);
   const activeIndex = hoverIndex !== null && points[hoverIndex] ? hoverIndex : null;
   const activePoint = activeIndex !== null ? points[activeIndex] : null;
   const activeX = activeIndex !== null ? x(activeIndex) : 0;
@@ -2146,7 +2153,7 @@ function BacktestLineChart({
         .find((snapshot) => snapshot.date <= activePoint.date)
     : null;
   const activeHoldings = activeSnapshot?.holdings ?? [];
-  const tooltipHoldingStartY = 122;
+  const tooltipHoldingStartY = 135;
   const tooltipHoldingRowGap = 11;
   const tooltipHeight = Math.max(150, tooltipHoldingStartY + Math.max(activeHoldings.length, 1) * tooltipHoldingRowGap + 8);
   const tooltipX = activeX > chartWidth - 228 ? activeX - 214 : activeX + 10;
@@ -2164,8 +2171,12 @@ function BacktestLineChart({
       onFocus={() => setHoverIndex(points.length - 1)}
       onBlur={() => setHoverIndex(null)}
     >
-      <line x1={chartLeft} y1="126" x2={chartRight} y2="126" className="grid" />
-      <line x1={chartLeft} y1="76" x2={chartRight} y2="76" className="grid" />
+      {yTicks.map((tick) => (
+        <g className="chart-y-tick" key={`${mode}-tick-${tick.index}`}>
+          <line x1={chartLeft} y1={tick.y} x2={chartRight} y2={tick.y} className="grid" />
+          <text x={chartLeft - 8} y={tick.y + 3} textAnchor="end">{tick.label}</text>
+        </g>
+      ))}
       {benchmarkPath && <path className="benchmark-line" d={benchmarkPath} />}
       <path className="strategy-line" d={path} />
       {highlightSegments.map((segment, index) => (
@@ -2175,8 +2186,9 @@ function BacktestLineChart({
         <g className="drawdown-marker">
           <line x1={markerX} y1="18" x2={markerX} y2="126" />
           <circle cx={markerX} cy={markerY} r="4.5" />
-          <text x={Math.min(Math.max(markerX, 64), chartWidth - 64)} y="28" textAnchor="middle">
-            最大回撤 {maxDrawdownPoint.date}
+          <text x={markerLabelX} y="24" textAnchor="middle">
+            <tspan x={markerLabelX}>最大回撤 {drawdownPct(maxDrawdownPoint.value)}</tspan>
+            <tspan x={markerLabelX} dy="12">{maxDrawdownPoint.date}</tspan>
           </text>
         </g>
       )}
@@ -2188,7 +2200,7 @@ function BacktestLineChart({
           <g className="chart-tooltip" transform={`translate(${tooltipX},${tooltipY})`}>
             <rect width="204" height={tooltipHeight} rx="12" />
             <line className="tooltip-divider" x1="12" y1="24" x2="192" y2="24" />
-            <line className="tooltip-divider subtle" x1="12" y1="96" x2="192" y2="96" />
+            <line className="tooltip-divider subtle" x1="12" y1="109" x2="192" y2="109" />
             <text className="date" x="12" y="16">{activePoint.date}</text>
             <text x="12" y="37">
               <tspan>累计</tspan><tspan className="value" x="192" textAnchor="end">{pct(cumulativeReturn)}</tspan>
@@ -2200,12 +2212,15 @@ function BacktestLineChart({
               <tspan>超额</tspan><tspan className="value" x="192" textAnchor="end">{excessReturn !== null ? pct(excessReturn) : "..."}</tspan>
             </text>
             <text x="12" y="76">
-              <tspan>最大</tspan><tspan className="value" x="192" textAnchor="end">{drawdownPct(drawdownToDate)}</tspan>
+              <tspan>回撤</tspan><tspan className="value" x="192" textAnchor="end">{drawdownPct(activeDrawdown.value)}</tspan>
             </text>
             <text x="12" y="89">
+              <tspan>最大</tspan><tspan className="value" x="192" textAnchor="end">{drawdownPct(drawdownToDate)}</tspan>
+            </text>
+            <text x="12" y="102">
               <tspan>成本</tspan><tspan className="value" x="192" textAnchor="end">{capitalMoney(activeCost)}</tspan>
             </text>
-            <text className="holdings-title" x="12" y="108">
+            <text className="holdings-title" x="12" y="121">
               持仓 {activeSnapshot ? `${activeSnapshot.date} · ${activeHoldings.length}只` : "暂无快照"}
             </text>
             {activeHoldings.map((holding, index) => {
