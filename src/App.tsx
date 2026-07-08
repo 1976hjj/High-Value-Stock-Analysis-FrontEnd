@@ -1,11 +1,13 @@
 import { type CSSProperties, type FocusEvent as ReactFocusEvent, type FormEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   getIndustryBenchmark,
+  getLiveQuote,
   getMeanReversionOverview,
   getMonteCarlo,
   getStrategyBacktest,
   getValuation,
 } from "./api";
+import type { LiveQuote } from "./api";
 import type {
   BacktestStrategyId,
   BankMeanReversionOverview,
@@ -220,6 +222,20 @@ const maybePct = (value: number | null) =>
   value === null ? "—" : purePct(value);
 const dayPct = (value: number | null) =>
   value === null ? "—" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
+const signedMoney = (value: number | null) =>
+  value === null ? "—" : `${value >= 0 ? "+" : "-"}¥${Math.abs(value).toFixed(2)}`;
+const quoteTone = (value: number | null) =>
+  value === null ? "flat" : value > 0 ? "up" : value < 0 ? "down" : "flat";
+const quoteArrow = (value: number | null) =>
+  value === null ? "—" : value > 0 ? "▲" : value < 0 ? "▼" : "◆";
+const marketAmount = (value: number | null) => {
+  if (value === null) return "—";
+  if (Math.abs(value) >= 100_000_000) return `¥${(value / 100_000_000).toFixed(2)}亿`;
+  if (Math.abs(value) >= 10_000) return `¥${(value / 10_000).toFixed(1)}万`;
+  return `¥${value.toFixed(0)}`;
+};
+const lotVolume = (value: number | null) =>
+  value === null ? "—" : `${(value / 1_000_000).toFixed(2)}万手`;
 const recoveryText = (days: number | null, recoveryDate: string | null) =>
   days === null ? "尚未修复" : `${days}天 · ${recoveryDate}`;
 const THEME_META: Record<UiTheme, { label: string; title: string }> = {
@@ -239,6 +255,38 @@ const localToday = () => {
   const now = new Date();
   const offset = now.getTimezoneOffset() * 60_000;
   return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+};
+
+const SAVED_DASHBOARD_KEY = "bank-valuation-dashboard-current";
+
+interface SavedDashboardState {
+  code: string;
+  bankSearch: string;
+  date: string;
+  result: ValuationResult;
+  monte: MonteCarloResult | null;
+  benchmark: IndustryBenchmark | null;
+  savedAt: string;
+}
+
+const loadSavedDashboard = (): SavedDashboardState | null => {
+  try {
+    const raw = localStorage.getItem(SAVED_DASHBOARD_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as Partial<SavedDashboardState>;
+    if (!saved.result?.stock_code) return null;
+    return {
+      code: saved.code || saved.result.stock_code.replace(/\D/g, "").slice(-6) || "601398",
+      bankSearch: saved.bankSearch || formatBankOption(saved.result.stock_code),
+      date: saved.date || localToday(),
+      result: saved.result,
+      monte: saved.monte ?? null,
+      benchmark: saved.benchmark ?? null,
+      savedAt: saved.savedAt || new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
 };
 
 const DEFAULT_BACKTEST_QUERY: StrategyBacktestQuery = {
@@ -2683,14 +2731,17 @@ function BacktestPage({
 }
 
 export default function App() {
+  const savedDashboard = useMemo(loadSavedDashboard, []);
   const [theme, setTheme] = useState<UiTheme>(initialTheme);
   const [page, setPage] = useState<Page>("overview");
-  const [code, setCode] = useState("601398");
-  const [bankSearch, setBankSearch] = useState(formatBankOption("601398"));
-  const [date, setDate] = useState(localToday);
-  const [result, setResult] = useState<ValuationResult | null>(null);
-  const [monte, setMonte] = useState<MonteCarloResult | null>(null);
-  const [benchmark, setBenchmark] = useState<IndustryBenchmark | null>(null);
+  const [code, setCode] = useState(savedDashboard?.code ?? "601398");
+  const [bankSearch, setBankSearch] = useState(savedDashboard?.bankSearch ?? formatBankOption("601398"));
+  const [date, setDate] = useState(savedDashboard?.date ?? localToday);
+  const [result, setResult] = useState<ValuationResult | null>(savedDashboard?.result ?? null);
+  const [liveQuote, setLiveQuote] = useState<LiveQuote | null>(null);
+  const [liveQuoteError, setLiveQuoteError] = useState("");
+  const [monte, setMonte] = useState<MonteCarloResult | null>(savedDashboard?.monte ?? null);
+  const [benchmark, setBenchmark] = useState<IndustryBenchmark | null>(savedDashboard?.benchmark ?? null);
   const [benchmarkLoading, setBenchmarkLoading] = useState(false);
   const [reversion, setReversion] = useState<BankMeanReversionOverview | null>(null);
   const [reversionLoading, setReversionLoading] = useState(false);
@@ -2702,8 +2753,16 @@ export default function App() {
   const [backtestError, setBacktestError] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [marketLagNoticeVisible, setMarketLagNoticeVisible] = useState(false);
   const rating = result ? RATING[result.final_rating] : null;
   const marketDateLagged = Boolean(result?.market_date && date && result.market_date < date);
+  const displayedPrice = liveQuote?.price ?? result?.current_price ?? null;
+  const displayedChangePct = liveQuote?.change_pct ?? result?.daily_change_pct ?? null;
+  const displayedChange = liveQuote?.change ?? null;
+  const displayedPb =
+    result && displayedPrice !== null && result.current_price > 0
+      ? result.current_pb * (displayedPrice / result.current_price)
+      : result?.current_pb ?? null;
   const visiblePage = useMemo(
     () => (result || page === "reversion" || page === "backtest" || page === "methods" ? page : "overview"),
     [page, result],
@@ -2725,6 +2784,60 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("bank-valuation-ui-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!result) return;
+    try {
+      const payload: SavedDashboardState = {
+        code,
+        bankSearch,
+        date,
+        result,
+        monte,
+        benchmark,
+        savedAt: new Date().toISOString(),
+      };
+      localStorage.setItem(SAVED_DASHBOARD_KEY, JSON.stringify(payload));
+    } catch (err) {
+      console.warn("[Bank Valuation] failed to save dashboard state", err);
+    }
+  }, [result, monte, benchmark, code, bankSearch, date]);
+
+  useEffect(() => {
+    if (!marketLagNoticeVisible) return;
+    const timer = window.setTimeout(() => setMarketLagNoticeVisible(false), 30_000);
+    return () => window.clearTimeout(timer);
+  }, [marketLagNoticeVisible, result?.market_date, date]);
+
+  useEffect(() => {
+    if (!result?.stock_code) {
+      setLiveQuote(null);
+      setLiveQuoteError("");
+      return;
+    }
+
+    let active = true;
+    const load = async () => {
+      try {
+        const quote = await getLiveQuote(result.stock_code);
+        if (!active) return;
+        setLiveQuote(quote);
+        setLiveQuoteError("");
+      } catch (err) {
+        if (!active) return;
+        setLiveQuoteError(err instanceof Error ? err.message : "实时行情暂不可用");
+      }
+    };
+
+    setLiveQuote(null);
+    setLiveQuoteError("");
+    void load();
+    const timer = window.setInterval(load, 60_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [result?.stock_code]);
 
   async function loadMeanReversion(forceRefresh = false) {
     setReversionLoading(true);
@@ -2789,12 +2902,15 @@ export default function App() {
   async function runAnalysis(forceRefresh = false, targetCode = code) {
     setLoading(true);
     setError("");
+    setLiveQuote(null);
+    setLiveQuoteError("");
     setPage("overview");
     try {
       // Baostock keeps process-global socket state. Request sequentially so a
       // valuation run is not interrupted by Monte Carlo opening another session.
       const valuation = await getValuation(targetCode, date, forceRefresh);
       setResult(valuation);
+      setMarketLagNoticeVisible(Boolean(valuation.market_date && date && valuation.market_date < date));
       const simulation = await getMonteCarlo(targetCode, date, forceRefresh);
       setMonte(simulation);
       setBenchmark(null);
@@ -2810,9 +2926,7 @@ export default function App() {
         .finally(() => setBenchmarkLoading(false));
     } catch (err) {
       setError(err instanceof Error ? err.message : "暂时无法连接数据服务");
-      setResult(null);
-      setMonte(null);
-      setBenchmark(null);
+      setMarketLagNoticeVisible(false);
       setBenchmarkLoading(false);
     } finally {
       setLoading(false);
@@ -2934,8 +3048,8 @@ export default function App() {
             <span>请确认后端已在 8000 端口启动，且 Baostock 网络可访问。</span>
           </div>
         )}
-        {result && marketDateLagged && (
-          <div className="market-lag">
+        {result && marketDateLagged && marketLagNoticeVisible && (
+          <div className="market-lag transient">
             <div>
               <b>市场数据还没有更新到你选择的日期</b>
               <span>
@@ -2986,7 +3100,8 @@ export default function App() {
             <section className="hero-card">
               <div>
                 <span className="eyebrow">
-                  {result.stock_code} · 市场数据 {result.market_date ?? "—"}
+                  {result.stock_code} · 估值收盘 {result.market_date ?? "—"}
+                  {liveQuote && ` · 实时 ${liveQuote.quote_date} ${liveQuote.quote_time}`}
                 </span>
                 <div className="bank-heading">
                   <BankLogo
@@ -3005,27 +3120,32 @@ export default function App() {
                 </p>
               </div>
               <div className="hero-price">
-                <span>当前收盘价</span>
-                <b>{money(result.current_price)}</b>
-                <em className={`day-change ${
-                  result.daily_change_pct === null
-                    ? "flat"
-                    : result.daily_change_pct > 0
-                      ? "up"
-                      : result.daily_change_pct < 0
-                        ? "down"
-                        : "flat"
-                }`}>
-                  {result.daily_change_pct === null
-                    ? "—"
-                    : result.daily_change_pct > 0
-                      ? "▲"
-                      : result.daily_change_pct < 0
-                        ? "▼"
-                        : "◆"}{" "}
-                  {dayPct(result.daily_change_pct)}
+                <span>{liveQuote ? "实时价格" : "估值收盘价"}</span>
+                <b>{money(displayedPrice)}</b>
+                <em className={`day-change ${quoteTone(displayedChangePct)}`}>
+                  {quoteArrow(displayedChangePct)}{" "}
+                  {dayPct(displayedChangePct)}
+                  {displayedChange !== null && ` / ${signedMoney(displayedChange)}`}
                 </em>
-                <small>PB {result.current_pb.toFixed(2)}</small>
+                <small>
+                  PB {displayedPb === null ? "—" : displayedPb.toFixed(2)}
+                  {liveQuote ? ` · 估值收盘 ${money(result.current_price)}` : ""}
+                </small>
+                <div className="quote-strip">
+                  <span>昨收 <b>{money(liveQuote?.previous_close ?? result.current_price)}</b></span>
+                  <span>今开 <b>{money(liveQuote?.open ?? null)}</b></span>
+                  <span>最高 <b>{money(liveQuote?.high ?? null)}</b></span>
+                  <span>最低 <b>{money(liveQuote?.low ?? null)}</b></span>
+                  <span>成交额 <b>{marketAmount(liveQuote?.amount ?? null)}</b></span>
+                  <span>成交量 <b>{lotVolume(liveQuote?.volume ?? null)}</b></span>
+                </div>
+                <i className={`quote-status ${liveQuoteError ? "warn" : liveQuote ? "live" : ""}`}>
+                  {liveQuote
+                    ? `实时轮询中 · ${liveQuote.source}`
+                    : liveQuoteError
+                      ? `${liveQuoteError}，暂用估值收盘`
+                      : "正在连接实时行情..."}
+                </i>
               </div>
               <div className={`rating ${rating!.tone}`}>
                 <span>分析分类</span>
