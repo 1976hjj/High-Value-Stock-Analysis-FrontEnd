@@ -258,8 +258,10 @@ const localToday = () => {
 };
 
 const SAVED_DASHBOARD_KEY = "bank-valuation-dashboard-current";
+const DASHBOARD_DATA_VERSION = 2;
 
 interface SavedDashboardState {
+  dataVersion?: number;
   code: string;
   bankSearch: string;
   date: string;
@@ -274,6 +276,7 @@ const loadSavedDashboard = (): SavedDashboardState | null => {
     const raw = localStorage.getItem(SAVED_DASHBOARD_KEY);
     if (!raw) return null;
     const saved = JSON.parse(raw) as Partial<SavedDashboardState>;
+    if (saved.dataVersion !== DASHBOARD_DATA_VERSION) return null;
     if (!saved.result?.stock_code) return null;
     return {
       code: saved.code || saved.result.stock_code.replace(/\D/g, "").slice(-6) || "601398",
@@ -826,77 +829,242 @@ function PbHistoryChart({
   points: ValuationResult["pb_history_chart"];
   currentPb: number;
 }) {
-  const priced = points.filter(
-    (point): point is { date: string; pb: number; close: number } =>
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [chartWidth, setChartWidth] = useState(1100);
+  const firstDate = points[0]?.date ?? "";
+  const lastDate = points.at(-1)?.date ?? "";
+  const [startDate, setStartDate] = useState(firstDate);
+  const [endDate, setEndDate] = useState(lastDate);
+  useEffect(() => {
+    const node = svgRef.current;
+    if (!node) return;
+    const updateWidth = () => {
+      const rect = node.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      setChartWidth(Math.max(720, Math.round((rect.width / rect.height) * 220)));
+    };
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    setStartDate(firstDate);
+    setEndDate(lastDate);
+    setHoverIndex(null);
+  }, [firstDate, lastDate]);
+  const allPriced = points.filter(
+    (point): point is { date: string; pb: number; pe?: number | null; close: number } =>
       point.close !== null,
   );
-  if (points.length < 2 || priced.length < 2)
+  if (points.length < 2 || allPriced.length < 2)
     return <LegacyPbHistoryChart points={points} currentPb={currentPb} />;
-  const pbValues = points.map((point) => point.pb);
+  const rangeStart = startDate <= endDate ? startDate : endDate;
+  const rangeEnd = startDate <= endDate ? endDate : startDate;
+  const visiblePoints = points.filter((point) => point.date >= rangeStart && point.date <= rangeEnd);
+  const priced = visiblePoints.filter(
+    (point): point is { date: string; pb: number; pe?: number | null; close: number } =>
+      point.close !== null,
+  );
+  const hasEnoughRange = visiblePoints.length >= 2 && priced.length >= 2;
+  const pbValues = visiblePoints.map((point) => point.pb);
+  const peValues = visiblePoints
+    .map((point) => point.pe)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   const prices = priced.map((point) => point.close);
+  const hasPe = peValues.length >= 2;
+  const percentileIn = (values: number[], value: number) =>
+    values.length ? values.filter((item) => item <= value).length / values.length : null;
+  if (!hasEnoughRange) {
+    return (
+      <div className="pb-chart dual-chart">
+        <div className="pb-range-controls">
+          <label>开始 <input type="date" min={firstDate} max={lastDate} value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
+          <label>结束 <input type="date" min={firstDate} max={lastDate} value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
+        </div>
+        <p className="no-history">当前时间段内可用数据不足，请放宽开始或结束日期。</p>
+      </div>
+    );
+  }
   const pbMin = Math.min(...pbValues) * 0.92;
   const pbMax = Math.max(...pbValues) * 1.08;
+  const peMin = hasPe ? Math.min(...peValues) * 0.92 : 0;
+  const peMax = hasPe ? Math.max(...peValues) * 1.08 : 1;
   const priceMin = Math.min(...prices) * 0.92;
   const priceMax = Math.max(...prices) * 1.08;
-  const x = (index: number) => 36 + (index / (points.length - 1)) * 388;
+  const chartLeft = 72;
+  const chartRight = chartWidth - 82;
+  const chartTop = 34;
+  const chartBottom = 184;
+  const chartHeight = chartBottom - chartTop;
+  const chartSpan = chartRight - chartLeft;
+  const x = (index: number) => chartLeft + (index / (visiblePoints.length - 1)) * chartSpan;
   const pbY = (value: number) =>
-    145 - ((value - pbMin) / (pbMax - pbMin || 1)) * 112;
+    chartBottom - ((value - pbMin) / (pbMax - pbMin || 1)) * chartHeight;
+  const peY = (value: number) =>
+    chartBottom - ((value - peMin) / (peMax - peMin || 1)) * chartHeight;
   const priceY = (value: number) =>
-    145 - ((value - priceMin) / (priceMax - priceMin || 1)) * 112;
-  const pbLine = points
+    chartBottom - ((value - priceMin) / (priceMax - priceMin || 1)) * chartHeight;
+  const priceAtIndex = (index: number) => {
+    for (let cursor = index; cursor >= 0; cursor -= 1) {
+      const close = visiblePoints[cursor]?.close;
+      if (close !== null && close !== undefined) return close;
+    }
+    return prices[0];
+  };
+  const pbLine = visiblePoints
     .map((point, index) => `${x(index)},${pbY(point.pb)}`)
     .join(" ");
-  const priceLine = points
-    .map((point, index) => `${x(index)},${priceY(point.close ?? prices[0])}`)
+  const peLine = hasPe
+    ? visiblePoints
+        .filter((point) => typeof point.pe === "number")
+        .map((point, index) => `${index === 0 ? "M" : "L"}${x(visiblePoints.indexOf(point))},${peY(point.pe as number)}`)
+        .join(" ")
+    : "";
+  const priceLine = visiblePoints
+    .map((_, index) => `${x(index)},${priceY(priceAtIndex(index))}`)
     .join(" ");
+  const pbTicks = [pbMax, (pbMax + pbMin) / 2, pbMin].map((value, index) => ({
+    index,
+    value,
+    y: pbY(value),
+  }));
+  const priceTicks = [priceMax, (priceMax + priceMin) / 2, priceMin].map((value, index) => ({
+    index,
+    value,
+    y: priceY(value),
+  }));
+  const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const chartX = ((event.clientX - rect.left) / rect.width) * chartWidth;
+    const ratio = Math.min(Math.max((chartX - chartLeft) / chartSpan, 0), 1);
+    setHoverIndex(Math.round(ratio * (visiblePoints.length - 1)));
+  };
+  const activeIndex = hoverIndex !== null && visiblePoints[hoverIndex] ? hoverIndex : null;
+  const activePoint = activeIndex !== null ? visiblePoints[activeIndex] : null;
+  const activePrice = activeIndex !== null ? priceAtIndex(activeIndex) : null;
+  const activeX = activeIndex !== null ? x(activeIndex) : 0;
+  const activePbY = activePoint ? pbY(activePoint.pb) : 0;
+  const activePe = typeof activePoint?.pe === "number" ? activePoint.pe : null;
+  const activePeY = activePe !== null ? peY(activePe) : 0;
+  const activePriceY = activePrice !== null ? priceY(activePrice) : 0;
+  const activePbPercentile = activePoint ? percentileIn(pbValues, activePoint.pb) : null;
+  const activePePercentile = activePe !== null ? percentileIn(peValues, activePe) : null;
+  const activePricePercentile = activePrice !== null ? percentileIn(prices, activePrice) : null;
+  const activePriceReturn = activePrice !== null ? activePrice / prices[0] - 1 : 0;
+  const rangeLastPoint = visiblePoints.at(-1)!;
+  const rangeLastPrice = priceAtIndex(visiblePoints.length - 1);
+  const rangeLastPe = typeof rangeLastPoint.pe === "number" ? rangeLastPoint.pe : null;
+  const rangeLastPbPercentile = percentileIn(pbValues, rangeLastPoint.pb);
+  const rangeLastPePercentile = rangeLastPe !== null ? percentileIn(peValues, rangeLastPe) : null;
+  const rangeLastPricePercentile = percentileIn(prices, rangeLastPrice);
+  const tooltipX = activeX > chartWidth - 238 ? activeX - 222 : activeX + 14;
+  const tooltipY = activePbY < 116 ? activePbY + 12 : activePbY - 108;
   return (
     <div className="pb-chart dual-chart">
+      <div className="pb-range-controls">
+        <label>开始 <input type="date" min={firstDate} max={lastDate} value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
+        <label>结束 <input type="date" min={firstDate} max={lastDate} value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
+      </div>
+      <div className="pb-range-summary">
+        <span>区间末 PB <b>{purePct(rangeLastPbPercentile ?? 0)}</b></span>
+        <span>区间末 PE <b>{rangeLastPePercentile === null ? "暂无历史" : purePct(rangeLastPePercentile)}</b></span>
+        <span>区间末价 <b>{purePct(rangeLastPricePercentile ?? 0)}</b></span>
+      </div>
       <div className="chart-labels">
-        <span>{points[0].date}</span>
+        <span>{visiblePoints[0].date}</span>
         <b>
           <i className="pb-key" />
-          PB {currentPb.toFixed(2)}　<i className="price-key" />
-          收盘价 {money(priced[priced.length - 1].close)}
+          PB {rangeLastPoint.pb.toFixed(2)}
+          {hasPe && <><i className="pe-key" />PE {rangeLastPe?.toFixed(2) ?? "—"}</>}
+          <i className="price-key" />收盘价 {money(rangeLastPrice)}
         </b>
-        <span>{points[points.length - 1].date}</span>
+        <span>{rangeLastPoint.date}</span>
       </div>
       <svg
-        viewBox="0 0 460 170"
+        ref={svgRef}
+        viewBox={`0 0 ${chartWidth} 220`}
         role="img"
         aria-label="历史 PB 和不复权收盘价走势"
+        tabIndex={0}
+        onPointerMove={handlePointerMove}
+        onPointerLeave={() => setHoverIndex(null)}
+        onFocus={() => setHoverIndex(visiblePoints.length - 1)}
+        onBlur={() => setHoverIndex(null)}
       >
-        <line x1="30" y1="145" x2="430" y2="145" className="grid" />
-        <line x1="30" y1="89" x2="430" y2="89" className="grid" />
-        <line x1="30" y1="33" x2="430" y2="33" className="grid" />
+        {pbTicks.map((tick) => (
+          <g className="pb-axis-tick" key={`pb-${tick.index}`}>
+            <line x1={chartLeft} y1={tick.y} x2={chartRight} y2={tick.y} className="grid" />
+            <text x={chartLeft - 10} y={tick.y + 3} textAnchor="end">PB {tick.value.toFixed(2)}</text>
+          </g>
+        ))}
+        {priceTicks.map((tick) => (
+          <text className="price-axis-tick" x={chartRight + 10} y={tick.y + 3} key={`price-${tick.index}`}>
+            ¥{tick.value.toFixed(2)}
+          </text>
+        ))}
         <polyline points={priceLine} className="price-history-line" />
+        {peLine && <path d={peLine} className="pe-history-line" />}
         <polyline points={pbLine} className="pb-line" />
         <circle
-          cx={x(points.length - 1)}
-          cy={pbY(points[points.length - 1].pb)}
+          cx={x(visiblePoints.length - 1)}
+          cy={pbY(rangeLastPoint.pb)}
           r="4"
           className="pb-point"
         />
+        {rangeLastPe !== null && (
+          <circle
+            cx={x(visiblePoints.length - 1)}
+            cy={peY(rangeLastPe)}
+            r="3.7"
+            className="pe-history-point"
+          />
+        )}
         <circle
-          cx={x(points.length - 1)}
-          cy={priceY(priced[priced.length - 1].close)}
+          cx={x(visiblePoints.length - 1)}
+          cy={priceY(rangeLastPrice)}
           r="3.5"
           className="price-history-point"
         />
-        <text x="2" y="36">
-          PB {pbMax.toFixed(2)}
-        </text>
-        <text x="2" y="148">
-          PB {pbMin.toFixed(2)}
-        </text>
-        <text x="400" y="36">
-          ¥{priceMax.toFixed(2)}
-        </text>
-        <text x="400" y="148">
-          ¥{priceMin.toFixed(2)}
-        </text>
+        {activePoint && activePrice !== null && (
+          <g className="pb-crosshair">
+            <line x1={activeX} y1={chartTop} x2={activeX} y2={chartBottom} />
+            <line x1={chartLeft} y1={activePbY} x2={chartRight} y2={activePbY} />
+            <circle cx={activeX} cy={activePbY} r="4.5" className="pb-point" />
+            {activePe !== null && <circle cx={activeX} cy={activePeY} r="4" className="pe-history-point" />}
+            <circle cx={activeX} cy={activePriceY} r="4" className="price-history-point" />
+            <g className="pb-history-tooltip" transform={`translate(${tooltipX},${tooltipY})`}>
+              <rect width="208" height="122" rx="10" />
+              <text className="date" x="12" y="17">{activePoint.date}</text>
+              <text x="12" y="34">
+                <tspan>PB</tspan><tspan className="value" x="196" textAnchor="end">{activePoint.pb.toFixed(2)}x</tspan>
+              </text>
+              <text x="12" y="47">
+                <tspan>PE</tspan><tspan className="value pe" x="196" textAnchor="end">{activePe === null ? "暂无" : `${activePe.toFixed(2)}x`}</tspan>
+              </text>
+              <text x="12" y="60">
+                <tspan>收盘价</tspan><tspan className="value price" x="196" textAnchor="end">{money(activePrice)}</tspan>
+              </text>
+              <text x="12" y="73">
+                <tspan>PB分位</tspan><tspan className="value" x="196" textAnchor="end">{activePbPercentile === null ? "—" : purePct(activePbPercentile)}</tspan>
+              </text>
+              <text x="12" y="86">
+                <tspan>PE分位</tspan><tspan className="value pe" x="196" textAnchor="end">{activePePercentile === null ? "暂无" : purePct(activePePercentile)}</tspan>
+              </text>
+              <text x="12" y="99">
+                <tspan>价格分位</tspan><tspan className="value price" x="196" textAnchor="end">{activePricePercentile === null ? "—" : purePct(activePricePercentile)}</tspan>
+              </text>
+              <text x="12" y="112">
+                <tspan>价格涨跌</tspan><tspan className="value price" x="196" textAnchor="end">{pct(activePriceReturn)}</tspan>
+              </text>
+            </g>
+          </g>
+        )}
+        <rect className="pb-hit-zone" x={chartLeft} y={chartTop - 10} width={chartSpan} height={chartHeight + 20} />
       </svg>
       <p className="dual-note">
-        绿线为 PB（左轴），紫线为除权除息后自然反映的实际收盘价（右轴）。
+        绿线为 PB，橙线为 PE（后端返回历史 PE 后显示），紫线为除权除息后自然反映的实际收盘价；分位均按所选时间段重新计算。
       </p>
     </div>
   );
@@ -1088,8 +1256,8 @@ function DetailsPage({ result }: { result: ValuationResult }) {
       <section className="card full-history">
         <div className="section-heading">
           <div>
-            <span className="eyebrow">近十年采样</span>
-            <h2>历史 PB 轨迹</h2>
+            <span className="eyebrow">全历史采样</span>
+            <h2>历史 PB / PE / 收盘价轨迹</h2>
           </div>
           <div className="percentile-summary">
             <span>3年 {purePct(result.pb_percentile_3y)}</span>
@@ -2804,6 +2972,7 @@ export default function App() {
     if (!result) return;
     try {
       const payload: SavedDashboardState = {
+        dataVersion: DASHBOARD_DATA_VERSION,
         code,
         bankSearch,
         date,

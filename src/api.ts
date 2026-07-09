@@ -52,8 +52,20 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export function getValuation(stock_code: string, valuation_date?: string, refresh_cache = false) {
+  const baseBody = { stock_code, valuation_date: valuation_date || null, refresh_cache };
+  const fullHistoryBody = {
+    ...baseBody,
+    history_years: null,
+    include_full_history: true,
+    include_pe_history: true,
+  };
   return request<ValuationResult>("/api/bank/valuation", {
-    method: "POST", body: JSON.stringify({ stock_code, valuation_date: valuation_date || null, refresh_cache }),
+    method: "POST", body: JSON.stringify(fullHistoryBody),
+  }).catch((err) => {
+    console.warn("[Bank Valuation] full history request failed, retrying legacy valuation payload", err);
+    return request<ValuationResult>("/api/bank/valuation", {
+      method: "POST", body: JSON.stringify(baseBody),
+    });
   });
 }
 

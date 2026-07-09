@@ -43,7 +43,7 @@ export interface ValuationResult {
   residual_income_price: number;
   residual_income_prices: Record<"3y" | "5y" | "10y", number>;
   input_snapshot: Record<string, number | string | boolean | null>;
-  pb_history_chart: Array<{ date: string; pb: number; close: number | null }>;
+  pb_history_chart: Array<{ date: string; pb: number; pe?: number | null; close: number | null }>;
   scenarios: Record<ScenarioName, Scenario>;
   scenario_probabilities: Record<ScenarioName, number>;
   upside_potential: number;
