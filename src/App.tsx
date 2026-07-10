@@ -22,7 +22,7 @@ import type {
 } from "./types";
 
 type Page = "overview" | "reversion" | "backtest" | "details" | "scenarios" | "methods";
-type UiTheme = "calm" | "fintech" | "terminal" | "research";
+type UiTheme = "calm" | "fintech" | "terminal" | "research" | "anime" | "euro";
 type ReversionMode = "reversion" | "income";
 
 const SCENARIO_META: Record<
@@ -243,11 +243,13 @@ const THEME_META: Record<UiTheme, { label: string; title: string }> = {
   fintech: { label: "科技粒子", title: "银行估值与回归信号台" },
   terminal: { label: "量化终端", title: "BANK SIGNAL TERMINAL" },
   research: { label: "投研白板", title: "银行估值工作台" },
+  anime: { label: "动漫霓虹", title: "Bank Heroine Valuation Board" },
+  euro: { label: "欧城石径", title: "European Bank Valuation Atelier" },
 };
 
 const initialTheme = (): UiTheme => {
   const saved = localStorage.getItem("bank-valuation-ui-theme");
-  return saved === "fintech" || saved === "terminal" || saved === "research"
+  return saved === "fintech" || saved === "terminal" || saved === "research" || saved === "anime" || saved === "euro"
     ? saved
     : "calm";
 };
@@ -475,7 +477,7 @@ function DefensiveDecisionPanel({ result }: { result: ValuationResult }) {
           </span>
           <b>{money(decision.buy_wait_price)}</b>
           <em className="has-tooltip" data-tooltip={statusTooltip[decision.buy_wait_status]}>{waitStatus.label}</em>
-          <small>距当前 {pct(decision.buy_wait_gap)}</small>
+          <small>等待价较当前 {pct(decision.buy_wait_gap)}</small>
           <p>{decision.buy_wait_reason}</p>
         </article>
         <article className="stress-card">
@@ -695,43 +697,131 @@ function MethodPage() {
     <div className="method-page fade-in">
       <div className="page-intro">
         <span className="eyebrow">读数指南</span>
-        <h1>先看风险，再看估值和股息。</h1>
-        <p>建议按红绿灯、压力价格、股息安全分、PB 分位和回测回撤顺序检查。</p>
+        <h1>指标怎么算，策略怎么选。</h1>
+        <p>这里把页面里用到的主要指标、银行排序、高股息回测和估值模型放在同一页，方便核对每个数字的含义。</p>
       </div>
       <div className="method-grid">
         <article>
           <b>01</b>
-          <h2>PB-ROE</h2>
-          <p>
-            将净资产收益能力与权益成本放在同一把尺上，得到合理 PB
-            倍数及对应价格。
-          </p>
+          <h2>估值与价格指标</h2>
+          <p>这一组回答“现在贵不贵”。银行股的核心不是看收入故事，而是看一元净资产能创造多少利润，以及市场愿意给这份净资产多少折价或溢价。</p>
+          <dl>
+            <dt>股价</dt><dd>估值模型使用最近可得收盘价；页面顶部实时价只用于观察盘中变化和实时 PB 估算。</dd>
+            <dt>每股净资产</dt><dd>BPS = 归母净资产 / 总股本，是 PB 的分母，也近似代表每股账面资本。</dd>
+            <dt>PB</dt><dd>市净率 = 股价 / 每股净资产。银行资产负债表占核心位置，所以 PB 是银行估值的主指标。</dd>
+            <dt>PE</dt><dd>市盈率 = 股价 / 每股收益，也可用总市值 / 归母净利润。利润波动大时，PE 容易失真。</dd>
+            <dt>PB 分位</dt><dd>把当前 PB 放进过去 3/5/10 年 PB 样本排序。10% 表示比历史上约 90% 的时候便宜。</dd>
+            <dt>折价幅度</dt><dd>相对历史 PB 中位数的折价 = 当前 PB / 历史中位 PB - 1，用来估算均值回归空间。</dd>
+            <dt>股息率</dt><dd>近 12 个月每股现金分红 / 当前股价。价格越低、分红越稳定，股息率越高。</dd>
+          </dl>
+          <p className="method-example">例：股价 10 元，每股净资产 20 元，则 PB=0.50；每股收益 1 元，则 PE=10 倍；每股分红 0.45 元，则股息率为 4.5%。</p>
+          <p className="method-caution">注意：低 PB 只说明市场给了折价，不自动等于便宜。若 ROE 下滑、不良暴露或资本不足，低 PB 可能是风险补偿。</p>
         </article>
         <article>
           <b>02</b>
-          <h2>股息底部</h2>
-          <p>以目标股息率反推价格，同时展示分红削减 30% 后的压力版本。</p>
+          <h2>盈利、质量和资本</h2>
+          <p>这一组回答“低估有没有陷阱”。银行是杠杆经营，利润、资产质量和资本缓冲要一起看。</p>
+          <dl>
+            <dt>ROE</dt><dd>净资产收益率 = 归母净利润 / 平均净资产，衡量银行用资本赚钱的能力。</dd>
+            <dt>净利润同比</dt><dd>本期归母净利润相对上年同期的增长率，用来判断盈利趋势。</dd>
+            <dt>息差压力</dt><dd>若贷款收益率下降快于负债成本，利润会承压；前端主要通过利润趋势和风险标签间接反映。</dd>
+            <dt>不良率</dt><dd>不良贷款 / 总贷款，越高代表资产质量压力越大。</dd>
+            <dt>拨备覆盖率</dt><dd>贷款损失准备 / 不良贷款，衡量风险缓冲。</dd>
+            <dt>CET1</dt><dd>核心一级资本充足率，衡量资本垫厚不厚。</dd>
+            <dt>分红率</dt><dd>现金分红 / 归母净利润。过高可能影响资本补充，过低则股息吸引力不足。</dd>
+          </dl>
+          <p className="method-example">例：ROE 12%、利润还在增长，同时不良率下降，比“低 PB 但 ROE 快速下滑”的银行更可靠。</p>
+          <p className="method-caution">读数顺序：先看 ROE 是否覆盖权益成本，再看利润是否恶化，最后看不良、拨备和 CET1 能不能承受压力。</p>
         </article>
         <article>
           <b>03</b>
-          <h2>剩余收益</h2>
-          <p>净资产之上，只有持续超过权益成本的部分才增加内在价值。</p>
+          <h2>三类估值模型</h2>
+          <p>模型不会给出唯一真值，而是从盈利能力、现金分红和长期内在价值三个角度互相校验。</p>
+          <dl>
+            <dt>权益成本</dt><dd>投资者要求的最低回报率。若 ROE 长期低于权益成本，账面净资产应打折。</dd>
+            <dt>PB-ROE</dt><dd>核心逻辑：ROE 越高且越稳定，合理 PB 越高；合理价 = 合理 PB × 每股净资产。</dd>
+            <dt>股息底部</dt><dd>价格 = 每股分红 / 目标股息率；同时计算分红削减 30% 后的压力底部。</dd>
+            <dt>剩余收益</dt><dd>剩余收益 = 净资产 × (ROE - 权益成本)。只有超过权益成本的利润才增加价值。</dd>
+            <dt>剩余收益价</dt><dd>内在价值 = 当前净资产 + 未来剩余收益折现，再换算到每股价格。</dd>
+            <dt>情景价格</dt><dd>乐观、基准、悲观、危机四档分别对应不同 ROE、利润增速、目标 PB 和触发条件。</dd>
+          </dl>
+          <p className="method-example">例：每股净资产 20 元，合理 PB 0.8，则 PB-ROE 合理价约 16 元。</p>
+          <p className="method-caution">解释方式：如果 PB-ROE 价、股息底部和剩余收益价都明显高于现价，信号更扎实；若只有一个模型给高价，要回到风险项检查。</p>
         </article>
         <article>
           <b>04</b>
-          <h2>风险与情景</h2>
-          <p>
-            低 PB
-            不是自动便宜。盈利、资产质量、资本缓冲和分红稳定性共同影响结果。
-          </p>
+          <h2>防守价格与红绿灯</h2>
+          <p>这一组不是预测最高能涨到哪里，而是帮助判断“现在买是否有缓冲”。</p>
+          <dl>
+            <dt>等待价</dt><dd>综合基准情景下沿、PB-ROE 价、剩余收益价和股息托底后，再扣安全边际。</dd>
+            <dt>买入差距</dt><dd>买入差距 = 等待价 / 当前价 - 1。正数表示当前价已经低于等待价，负数表示还没到等待区。</dd>
+            <dt>安全边际</dt><dd>估算价值相对当前价格的折扣空间，越高越有缓冲；负数表示现价高于模型价值。</dd>
+            <dt>压力价格</dt><dd>假设 ROE 下滑、分红削减或资产质量恶化时的价格，用来观察下行承受力。</dd>
+            <dt>风险灯</dt><dd>根据盈利、资产质量、资本、分红稳定性给出绿/黄/红提示。</dd>
+            <dt>风险标签</dt><dd>把主要风险写成短标签，例如利润下滑、拨备偏低、资本缓冲不足、股息压力。</dd>
+          </dl>
+          <p className="method-example">例：合理价 12 元，等待价 9.5 元，现价 10.5 元，页面会提示“接近但仍需等待”。</p>
+          <p className="method-caution">使用方式：绿色不等于一定买，红色也不等于一定卖；它只是提示你先检查哪些风险项。</p>
+        </article>
+        <article className="method-wide">
+          <b>05</b>
+          <h2>银行排序如何打分</h2>
+          <p>排序不是单看便宜，而是把低估、均值回归、股息、质量和风险放在一起。</p>
+          <dl>
+            <dt>低估分</dt><dd>PB 分位越低、相对 5 年中位 PB 折价越大，分数越高。</dd>
+            <dt>回归分</dt><dd>当前 PB 回到历史中位或合理区间时的上行空间越大，分数越高。</dd>
+            <dt>股息分</dt><dd>股息率较高且分红率不过度透支利润，分数越高。</dd>
+            <dt>质量分</dt><dd>ROE 稳定、利润不恶化、不良率低、拨备和 CET1 有缓冲，分数越高。</dd>
+            <dt>风险扣分</dt><dd>利润下滑、资产质量恶化、资本偏薄、分红不可持续都会扣分。</dd>
+          </dl>
+          <ol>
+            <li>先计算 PB 分位、相对 5 年 PB 中位数折价、均值回归空间和基准情景上行空间。</li>
+            <li>再看股息率、股息安全分、ROE、利润增速、不良率、拨备覆盖率和 CET1。</li>
+            <li>把银行分为“高确定性回归、低估观察、估值中性、风险型低估、估值偏高”等状态。</li>
+            <li>股息视角会另算“核心股息、股息观察、股息陷阱风险、非股息候选”。</li>
+          </ol>
+          <p className="method-example">例：A 银行 PB 分位 8%、ROE 稳定、股息率 5%、风险低，会排在“低估观察”前列；B 银行也低 PB，但利润转负、不良上升，会被归为“风险型低估”。</p>
+          <p className="method-caution">排序的含义是“优先研究顺序”，不是自动买入名单。前排银行仍要看价格是否到等待区、风险灯是否变黄或变红。</p>
+        </article>
+        <article className="method-wide">
+          <b>06</b>
+          <h2>高股息银行策略回测</h2>
+          <p>回测模拟“每期按规则选一篮子银行、定期调仓、计入交易成本和现金收益”的过程。</p>
+          <dl>
+            <dt>核心目标</dt><dd>寻找股息率较高、分红安全、盈利稳定、估值不过高、风险不过度暴露的银行组合。</dd>
+            <dt>股息安全</dt><dd>综合分红率、ROE、利润趋势、资本缓冲和风险项，避免只追高股息率。</dd>
+            <dt>稳定增长</dt><dd>偏好利润不剧烈恶化、ROE 较稳、资产质量没有明显下行的银行。</dd>
+            <dt>调仓频率</dt><dd>按月、季度、半年或年度重新筛选；频率越高越灵敏，但交易成本也越高。</dd>
+            <dt>交易成本</dt><dd>回测计入佣金、印花税、过户费、滑点和现金收益，避免收益被高估。</dd>
+          </dl>
+          <ol>
+            <li>选股池：A 股上市银行，使用当时可见的价格、PB、分红、ROE、风险数据。</li>
+            <li>硬过滤：剔除股息率过低、股息安全分过低、风险分过高、分红支付率过高的样本。</li>
+            <li>综合打分：股息率、股息安全、稳定增长、估值折价加分，风险分扣分。</li>
+            <li>持仓构建：选得分靠前的 N 只银行，按设置频率月度/季度/半年/年度调仓。</li>
+            <li>绩效统计：计算累计收益、年化收益、最大回撤、夏普、胜率、股息贡献和交易成本。</li>
+          </ol>
+          <p className="method-example">例：设置持仓 10 只、最低股息率 3%、季度调仓；每季度重新排序，卖出跌出前列的银行，买入新进入前列的银行。</p>
+          <p className="method-caution">看回测不要只看年化收益，还要同时看最大回撤、修复时间、换手率和交易成本。高股息策略的优势通常是现金流和回撤控制，不是每天都跑赢。</p>
+        </article>
+        <article className="method-wide">
+          <b>07</b>
+          <h2>建议的读数顺序</h2>
+          <ol>
+            <li>先看顶部实时价格和估值收盘价，确认当前价格是否已经明显偏离估值使用价格。</li>
+            <li>再看风险灯和压力测试，排除利润、资产质量、资本和分红的明显红灯。</li>
+            <li>看 PB 分位和均值回归空间，判断是否处于历史低位。</li>
+            <li>看 PB-ROE、股息底部和剩余收益三个模型是否互相支持。</li>
+            <li>最后看银行排序和回测：排序用于找候选，回测用于理解策略长期特征。</li>
+          </ol>
+          <p className="method-example">例：某银行 PB 分位很低，但红灯提示“利润转负、不良上升”，应先归为风险观察；另一家 PB 没那么低，但股息安全、ROE 稳定、回测回撤小，可能更适合股息组合。</p>
         </article>
       </div>
       <div className="data-note">
         <span>数据边界</span>
         <p>
-          日价格使用 Baostock
-          不复权收盘价（除权除息变化在当天自然反映）；财务数据为估值日前可取得的最新披露。后端暂以透明默认值补齐
-          Baostock 未稳定提供的银行专属指标。
+          日价格主要来自 Baostock 不复权收盘价，实时价格来自第三方行情源并只用于展示和实时 PB 估算；财务数据使用估值日前已披露的最新报告。
+          回测会尽量按历史时点取数，但仍受数据源覆盖、财报披露滞后和默认补齐规则影响，结果用于研究，不等同于可交易承诺。
         </p>
       </div>
     </div>
@@ -876,10 +966,59 @@ function PbHistoryChart({
   const hasPe = peValues.length >= 2;
   const percentileIn = (values: number[], value: number) =>
     values.length ? values.filter((item) => item <= value).length / values.length : null;
+  const formatLocalDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = `${date.getMonth() + 1}`.padStart(2, "0");
+    const day = `${date.getDate()}`.padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+  const rangeForPreset = (years: number | null) => {
+    if (!years) return { start: firstDate, end: lastDate };
+    const cutoff = new Date(`${lastDate}T00:00:00`);
+    cutoff.setFullYear(cutoff.getFullYear() - years);
+    const targetStart = formatLocalDate(cutoff);
+    const start = firstDate >= targetStart
+      ? firstDate
+      : points.find((point) => point.date >= targetStart)?.date ?? firstDate;
+    return { start, end: lastDate };
+  };
+  const applyRangePreset = (years: number | null) => {
+    const next = rangeForPreset(years);
+    setStartDate(next.start);
+    setEndDate(next.end);
+    setHoverIndex(null);
+  };
+  const isRangePresetActive = (years: number | null) => {
+    const preset = rangeForPreset(years);
+    if (years && preset.start === firstDate) return false;
+    return startDate === preset.start && endDate === preset.end;
+  };
+  const presetControls = (
+    <div className="pb-range-presets" aria-label="历史区间快捷选择">
+      {[3, 5, 10].map((years) => (
+        <button
+          type="button"
+          key={years}
+          className={isRangePresetActive(years) ? "active" : ""}
+          onClick={() => applyRangePreset(years)}
+        >
+          {years}年
+        </button>
+      ))}
+      <button
+        type="button"
+        className={isRangePresetActive(null) ? "active" : ""}
+        onClick={() => applyRangePreset(null)}
+      >
+        所有时间
+      </button>
+    </div>
+  );
   if (!hasEnoughRange) {
     return (
       <div className="pb-chart dual-chart">
         <div className="pb-range-controls">
+          {presetControls}
           <label>开始 <input type="date" min={firstDate} max={lastDate} value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
           <label>结束 <input type="date" min={firstDate} max={lastDate} value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
         </div>
@@ -964,6 +1103,7 @@ function PbHistoryChart({
   return (
     <div className="pb-chart dual-chart">
       <div className="pb-range-controls">
+        {presetControls}
         <label>开始 <input type="date" min={firstDate} max={lastDate} value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
         <label>结束 <input type="date" min={firstDate} max={lastDate} value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
       </div>
