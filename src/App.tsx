@@ -1,4 +1,20 @@
 import { type CSSProperties, type FocusEvent as ReactFocusEvent, type FormEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import gundamRx78 from "./assets/gundam-series-rx78-0079.png";
+import gundamCharZaku from "./assets/gundam-series-char-zaku-0079.png";
+import gundamStrike from "./assets/gundam-series-strike-seed.png";
+import gundamFreedom from "./assets/gundam-series-freedom-seed.png";
+import gundamJustice from "./assets/gundam-series-justice-seed.png";
+import gundamDestiny from "./assets/gundam-series-destiny.png";
+import gundamStrikeFreedom from "./assets/gundam-series-strike-freedom.png";
+import gundamInfiniteJustice from "./assets/gundam-series-infinite-justice.png";
+import gundamActionRx78 from "./assets/gundam-action-rx78-saber-launch.png";
+import gundamActionCharZaku from "./assets/gundam-action-char-zaku-desert.png";
+import gundamActionAileStrike from "./assets/gundam-action-aile-strike-carrier.png";
+import gundamActionFreedom from "./assets/gundam-action-freedom-clouds.png";
+import gundamActionDestiny from "./assets/gundam-action-destiny-reentry.png";
+import gundamActionImpulse from "./assets/gundam-action-impulse-assembly.png";
+import gundamActionGouf from "./assets/gundam-action-gouf-city.png";
+import gundamActionUnicorn from "./assets/gundam-action-unicorn-orbit.png";
 import {
   getIndustryBenchmark,
   getLiveQuote,
@@ -22,7 +38,7 @@ import type {
 } from "./types";
 
 type Page = "overview" | "reversion" | "backtest" | "details" | "scenarios" | "methods";
-type UiTheme = "calm" | "fintech" | "terminal" | "research" | "anime" | "euro";
+type UiTheme = "calm" | "fintech" | "terminal" | "research" | "gundam" | "euro";
 type ReversionMode = "reversion" | "income";
 
 const SCENARIO_META: Record<
@@ -243,13 +259,15 @@ const THEME_META: Record<UiTheme, { label: string; title: string }> = {
   fintech: { label: "科技粒子", title: "银行估值与回归信号台" },
   terminal: { label: "量化终端", title: "BANK SIGNAL TERMINAL" },
   research: { label: "投研白板", title: "银行估值工作台" },
-  anime: { label: "动漫霓虹", title: "Bank Heroine Valuation Board" },
+  gundam: { label: "高达机库", title: "MOBILE SUIT · BANK VALUATION" },
   euro: { label: "欧城石径", title: "European Bank Valuation Atelier" },
 };
 
 const initialTheme = (): UiTheme => {
   const saved = localStorage.getItem("bank-valuation-ui-theme");
-  return saved === "fintech" || saved === "terminal" || saved === "research" || saved === "anime" || saved === "euro"
+  return saved === "anime"
+    ? "gundam"
+    : saved === "fintech" || saved === "terminal" || saved === "research" || saved === "gundam" || saved === "euro"
     ? saved
     : "calm";
 };
@@ -2860,11 +2878,11 @@ function BacktestPage({
           </label>
           <label>
             <ParamLabel label="买入成本率" tooltip="佣金、滑点、过户费等买入侧成本合计。填 0.03 表示 0.03%。" />
-            <NumberStepper ariaLabel="买入成本率" min={0} max={2} step={0.001} decimals={3} value={buyCostRate * 100} onChange={(value) => updateBuyCostRate(value / 100)} />
+            <NumberStepper ariaLabel="买入成本率" min={0} max={2} step={0.01} decimals={2} value={buyCostRate * 100} onChange={(value) => updateBuyCostRate(value / 100)} />
           </label>
           <label>
             <ParamLabel label="卖出印花税" tooltip="卖出侧印花税率。A 股常见口径可按实际费率手动调整。" />
-            <NumberStepper ariaLabel="卖出印花税" min={0} max={2} step={0.001} decimals={3} value={query.stamp_duty_rate * 100} onChange={(value) => updateQuery("stamp_duty_rate", value / 100)} />
+            <NumberStepper ariaLabel="卖出印花税" min={0} max={2} step={0.01} decimals={2} value={query.stamp_duty_rate * 100} onChange={(value) => updateQuery("stamp_duty_rate", value / 100)} />
           </label>
         </div>
         {dateRangeError && <p className="backtest-inline-error">{dateRangeError}</p>}
@@ -3105,6 +3123,27 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    document.documentElement.style.setProperty("--gundam-hangar-art", `url("${gundamActionFreedom}")`);
+    [
+      gundamActionRx78,
+      gundamActionCharZaku,
+      gundamActionAileStrike,
+      gundamActionFreedom,
+      gundamActionDestiny,
+      gundamActionImpulse,
+      gundamActionGouf,
+      gundamActionUnicorn,
+      gundamRx78,
+      gundamCharZaku,
+      gundamStrike,
+      gundamFreedom,
+      gundamJustice,
+      gundamDestiny,
+      gundamStrikeFreedom,
+      gundamInfiniteJustice,
+    ].forEach((image, index) => {
+      document.documentElement.style.setProperty(`--gundam-mecha-${index + 1}`, `url("${image}")`);
+    });
     localStorage.setItem("bank-valuation-ui-theme", theme);
   }, [theme]);
 
@@ -3366,6 +3405,18 @@ export default function App() {
             </button>
           </form>
         </header>
+        {theme === "gundam" && (
+          <section className="gundam-visual-banner" aria-label="机甲机库主题主视觉">
+            <img
+              src={gundamActionRx78}
+              alt="持光束剑突进的白蓝红机体"
+            />
+            <div>
+              <span>HANGAR VISUAL</span>
+              <b>MOBILE SUIT / READY</b>
+            </div>
+          </section>
+        )}
         {error && (
           <div className="error">
             {error}

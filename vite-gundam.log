@@ -1,0 +1,15 @@
+
+> bank-valuation-dashboard@0.1.0 dev
+> vite --host 127.0.0.1 --port 5173
+
+Port 5173 is in use, trying another one...
+Port 5174 is in use, trying another one...
+
+  VITE v8.1.0  ready in 142 ms
+
+  ➜  Local:   http://127.0.0.1:5175/
+06:13:20 [vite] (client) hmr update /src/App.tsx
+06:13:20 [vite] (client) hmr update /src/styles.css
+06:16:29 [vite] (client) hmr update /src/styles.css
+06:20:44 [vite] (client) hmr update /src/styles.css
+06:27:32 [vite] (client) hmr update /src/styles.css
