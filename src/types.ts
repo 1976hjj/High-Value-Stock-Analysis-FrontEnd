@@ -110,6 +110,129 @@ export interface IndustryBenchmark {
   data_note: string;
 }
 
+export interface IndustryAnalysisMetric {
+  key: string;
+  label: string;
+  value: string;
+  score: number;
+  status: "strong" | "stable" | "watch" | "risk";
+  source: string;
+}
+
+export interface IndustryPanoramaMetric {
+  key: string;
+  label: string;
+  value: string;
+  raw_value: number | null;
+  score: number;
+  status: "strong" | "stable" | "watch" | "risk";
+  quality: "reported" | "derived" | "proxy";
+  interpretation: string;
+  source: string;
+}
+
+export interface IndustryPanoramaGroup {
+  id: string;
+  title: string;
+  metrics: IndustryPanoramaMetric[];
+}
+
+export interface IndustryPanorama {
+  report_date: string;
+  published_date: string;
+  coverage_ratio: number;
+  groups: IndustryPanoramaGroup[];
+}
+
+export interface IndustryPriceScenario {
+  id: "bull" | "base" | "bear" | "crisis";
+  name: string;
+  earnings_change: number;
+  target_pe: number;
+  dividend_yield_anchor: number | null;
+  price_low: number;
+  price_mid: number;
+  price_high: number;
+  return_low: number;
+  return_mid: number;
+  return_high: number;
+  confidence: number;
+  drivers: string[];
+  triggers: string[];
+  formula: string;
+}
+
+export interface IndustryPriceProjection {
+  model_name: string;
+  current_price: number;
+  current_pe: number;
+  implied_eps_ttm: number;
+  market_date: string;
+  report_date: string;
+  scenarios: IndustryPriceScenario[];
+  base_value_mid: number;
+  defensive_entry_price: number;
+  conclusion: string;
+  assumptions: string[];
+  data_note: string;
+}
+
+export interface IndustryAnalysisResult {
+  module: "industry_analysis";
+  industry_id: string;
+  industry_name: string;
+  stock_code: string;
+  stock_name: string;
+  market_date: string;
+  valuation_date: string;
+  current_price: number;
+  daily_change_pct: number | null;
+  current_pb: number | null;
+  current_pe: number | null;
+  valuation_metric: "pb" | "pe";
+  valuation_percentile: number;
+  scores: {
+    defense: number;
+    income: number;
+    quality: number;
+    valuation: number;
+    risk: number;
+    overall: number;
+  };
+  metrics: IndustryAnalysisMetric[];
+  panorama?: IndustryPanorama | null;
+  price_projection?: IndustryPriceProjection | null;
+  risk_flags: string[];
+  data_note: string;
+}
+
+export interface IndustryRankingRow {
+  rank: number;
+  stock_code: string;
+  stock_name: string;
+  market_date: string;
+  report_date: string | null;
+  overall_score: number;
+  defense_score: number;
+  quality_score: number;
+  income_score: number;
+  valuation_score: number;
+  risk_score: number;
+  valuation_percentile: number;
+  key_metrics: IndustryPanoramaMetric[];
+  risk_flags: string[];
+}
+
+export interface IndustryRankingResponse {
+  module: "industry_ranking";
+  industry_id: "hydro" | "consumer";
+  valuation_date: string;
+  result_count: number;
+  results: IndustryRankingRow[];
+  failures: Array<{ stock_code: string; stock_name?: string; error: string }>;
+  data_note: string;
+}
+
 export interface BankMeanReversionRow {
   rank: number;
   stock_code: string;
@@ -171,6 +294,11 @@ export interface BankMeanReversionOverview {
 export type BacktestStrategyId = "income_core" | "value_reversion" | "defensive_rotation";
 
 export interface StrategyBacktestQuery {
+  universe_mode: "single" | "selected" | "all";
+  industry_ids: string[];
+  industry_weighting: "equal" | "risk_parity" | "score";
+  max_industry_weight: number;
+  crisis_cash_buffer: number;
   years: number;
   start_date?: string | null;
   end_date?: string | null;
@@ -197,13 +325,17 @@ export interface StrategyBacktestQuery {
 export interface BacktestHolding {
   stock_code: string;
   stock_name: string;
+  industry_id?: string;
   weight: number;
   score: number;
-  dividend_yield: number;
+  dividend_yield: number | null;
   risk_score: number;
   entry_date?: string | null;
   holding_days?: number;
   profit?: number;
+  position_value?: number;
+  cost_basis?: number;
+  profit_return?: number;
 }
 
 export interface StrategyBacktestResult {
@@ -246,5 +378,9 @@ export interface StrategyBacktestResponse {
   benchmark_note: string;
   data_note: string;
   benchmark_curve?: Array<{ date: string; value: number }>;
+  selected_industry_ids?: string[];
+  universe_size?: number;
+  industry_allocation?: Record<string, number>;
+  failures?: Array<{ stock_code: string; error: string }>;
   results: StrategyBacktestResult[];
 }

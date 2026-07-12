@@ -1,6 +1,8 @@
 import type {
   BankMeanReversionOverview,
   IndustryBenchmark,
+  IndustryAnalysisResult,
+  IndustryRankingResponse,
   MonteCarloResult,
   StrategyBacktestQuery,
   StrategyBacktestResponse,
@@ -30,7 +32,7 @@ export interface LiveQuote {
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const startedAt = performance.now();
-  console.info(`[Bank Valuation] request → ${path}`, options?.body);
+  console.info(`[Defensive Value] request → ${path}`, options?.body);
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, {
@@ -38,16 +40,19 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
       ...options,
     });
   } catch (err) {
-    console.error(`[Bank Valuation] network failed ← ${path}`, err);
+    console.error(`[Defensive Value] network failed ← ${path}`, err);
     throw new Error("无法连接后端服务。请确认后端已在 8000 端口启动，然后重试。");
   }
   if (!response.ok) {
     const error = await response.json().catch(() => null);
-    console.error(`[Bank Valuation] request failed ← ${path}`, { status: response.status, detail: error?.detail });
-    throw new Error(error?.detail || `请求失败（${response.status}）`);
+    console.error(`[Defensive Value] request failed ← ${path}`, { status: response.status, detail: error?.detail });
+    const detail = Array.isArray(error?.detail)
+      ? error.detail.map((item: { msg?: string } | string) => typeof item === "string" ? item : item.msg ?? "参数校验失败").join("；")
+      : error?.detail;
+    throw new Error(detail || `请求失败（${response.status}）`);
   }
   const data = await response.json() as T;
-  console.info(`[Bank Valuation] response ← ${path} (${Math.round(performance.now() - startedAt)}ms)`, data);
+  console.info(`[Defensive Value] response ← ${path} (${Math.round(performance.now() - startedAt)}ms)`, data);
   return data;
 }
 
@@ -97,9 +102,62 @@ export function getMeanReversionOverview(
 }
 
 export function getStrategyBacktest(params: StrategyBacktestQuery) {
-  return request<StrategyBacktestResponse>("/api/bank/strategy-backtest", {
+  const selectedIndustries = params.industry_ids ?? ["bank"];
+  const bankOnly = selectedIndustries.length === 1 && selectedIndustries[0] === "bank";
+  const path = bankOnly ? "/api/bank/strategy-backtest" : "/api/strategy/backtest";
+  const payload: Record<string, unknown> = { ...params };
+  if (bankOnly) {
+    delete payload.universe_mode;
+    delete payload.industry_ids;
+    delete payload.industry_weighting;
+    delete payload.max_industry_weight;
+    delete payload.crisis_cash_buffer;
+  }
+  return request<StrategyBacktestResponse>(path, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function prepareStrategyBacktest(params: StrategyBacktestQuery) {
+  const selectedIndustries = params.industry_ids ?? ["bank"];
+  const bankOnly = selectedIndustries.length === 1 && selectedIndustries[0] === "bank";
+  if (bankOnly) return getStrategyBacktest(params);
+  return request<StrategyBacktestResponse>("/api/strategy/backtest/prepare", {
     method: "POST",
     body: JSON.stringify(params),
+  });
+}
+
+export function getIndustryAnalysis(
+  industry_id: string,
+  stock_code: string,
+  valuation_date?: string,
+  refresh_cache = false,
+) {
+  return request<IndustryAnalysisResult>("/api/industry/analysis", {
+    method: "POST",
+    body: JSON.stringify({
+      industry_id,
+      stock_code,
+      valuation_date: valuation_date || null,
+      refresh_cache,
+    }),
+  });
+}
+
+export function getIndustryRanking(
+  industry_id: "hydro" | "consumer" | "resources" | "oilgas" | "tollroad" | "nuclear" | "telecom",
+  valuation_date?: string,
+  refresh_cache = false,
+) {
+  return request<IndustryRankingResponse>("/api/industry/ranking", {
+    method: "POST",
+    body: JSON.stringify({
+      industry_id,
+      valuation_date: valuation_date || null,
+      refresh_cache,
+    }),
   });
 }
 

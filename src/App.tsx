@@ -17,9 +17,11 @@ import gundamActionGouf from "./assets/gundam-action-gouf-city.png";
 import gundamActionUnicorn from "./assets/gundam-action-unicorn-orbit.png";
 import {
   getIndustryBenchmark,
+  getIndustryAnalysis,
   getLiveQuote,
   getMeanReversionOverview,
   getMonteCarlo,
+  prepareStrategyBacktest,
   getStrategyBacktest,
   getValuation,
 } from "./api";
@@ -29,6 +31,7 @@ import type {
   BankMeanReversionOverview,
   BankMeanReversionRow,
   IndustryBenchmark,
+  IndustryAnalysisResult,
   MonteCarloResult,
   ScenarioName,
   StrategyBacktestQuery,
@@ -36,6 +39,18 @@ import type {
   StrategyBacktestResult,
   ValuationResult,
 } from "./types";
+import {
+  DiversificationBlueprint,
+  IndustryTabs,
+  IndustryUniverseBuilder,
+  IndustryWorkspace,
+} from "./IndustryWorkspace";
+import {
+  INDUSTRY_MAP,
+  normalizeStockCode,
+  stockOptionsForIndustry,
+  type IndustryId,
+} from "./industryConfig";
 
 type Page = "overview" | "reversion" | "backtest" | "details" | "scenarios" | "methods";
 type UiTheme = "calm" | "fintech" | "terminal" | "research" | "gundam" | "euro";
@@ -63,6 +78,8 @@ const BANK_OPTIONS = [
   ["601825", "上海农商银行"], ["601077", "渝农商行"], ["600928", "西安银行"], ["601665", "齐鲁银行"], ["601187", "厦门银行"], ["601860", "紫金银行"], ["601528", "瑞丰银行"], ["600908", "无锡银行"], ["001227", "兰州银行"], ["002936", "郑州银行"],
   ["002966", "苏州银行"], ["002948", "青岛银行"], ["601128", "常熟银行"], ["603323", "苏农银行"], ["002807", "江阴银行"], ["002839", "张家港行"], ["002958", "青农商行"],
 ] as const;
+
+type StockOptionList = readonly (readonly [string, string])[];
 
 const BANK_LOGO_CODES = new Set([
   "000001", "001227", "002142", "002807", "002839", "002936", "002948", "002958",
@@ -118,11 +135,13 @@ const BANK_SEARCH_ALIASES: Record<string, string> = {
   "002958": "qnsyh qingnongshanghang qingdaonongshang",
 };
 
-const formatBankOption = (bankCode: string) => {
-  const normalized = bankCode.includes(".") ? bankCode.split(".")[1] : bankCode;
-  const option = BANK_OPTIONS.find(([code]) => code === normalized);
+const formatStockOption = (stockCode: string, options: StockOptionList) => {
+  const normalized = normalizeStockCode(stockCode);
+  const option = options.find(([code]) => code === normalized);
   return option ? `${option[0]} · ${option[1]}` : normalized;
 };
+
+const formatBankOption = (bankCode: string) => formatStockOption(bankCode, BANK_OPTIONS);
 
 const normalizeBankSearchText = (text: string) =>
   text
@@ -132,18 +151,18 @@ const normalizeBankSearchText = (text: string) =>
 const bankSearchHaystack = (code: string, name: string) =>
   normalizeBankSearchText(`${code}${name}${BANK_SEARCH_ALIASES[code] ?? ""}`);
 
-const resolveBankCode = (input: string, fallback: string) => {
+const resolveStockCode = (input: string, fallback: string, options: StockOptionList) => {
   const text = input.trim();
   if (!text) return fallback;
   const digitMatch = text.match(/\d{6}/);
   if (digitMatch) return digitMatch[0];
   const compact = text.replace(/\s/g, "");
-  const exact = BANK_OPTIONS.find(
+  const exact = options.find(
     ([code, name]) => name === text || `${code}·${name}` === compact,
   );
   if (exact) return exact[0];
   const normalizedText = normalizeBankSearchText(text);
-  const partial = BANK_OPTIONS.find(
+  const partial = options.find(
     ([code, name]) => code.includes(text) || name.includes(text) || bankSearchHaystack(code, name).includes(normalizedText),
   );
   return partial?.[0] ?? fallback;
@@ -255,12 +274,12 @@ const lotVolume = (value: number | null) =>
 const recoveryText = (days: number | null, recoveryDate: string | null) =>
   days === null ? "尚未修复" : `${days}天 · ${recoveryDate}`;
 const THEME_META: Record<UiTheme, { label: string; title: string }> = {
-  calm: { label: "经典", title: "银行估值与股息筛选工作台" },
-  fintech: { label: "科技粒子", title: "银行估值与回归信号台" },
-  terminal: { label: "量化终端", title: "BANK SIGNAL TERMINAL" },
-  research: { label: "投研白板", title: "银行估值工作台" },
-  gundam: { label: "高达机库", title: "MOBILE SUIT · BANK VALUATION" },
-  euro: { label: "欧城石径", title: "European Bank Valuation Atelier" },
+  calm: { label: "经典", title: "多行业价值与危机防御工作台" },
+  fintech: { label: "科技粒子", title: "多行业价值与防御信号台" },
+  terminal: { label: "量化终端", title: "DEFENSIVE VALUE TERMINAL" },
+  research: { label: "投研白板", title: "跨行业价值投研工作台" },
+  gundam: { label: "高达机库", title: "MOBILE SUIT · DEFENSIVE VALUE" },
+  euro: { label: "欧城石径", title: "Multi-sector Value Atelier" },
 };
 
 const initialTheme = (): UiTheme => {
@@ -278,10 +297,11 @@ const localToday = () => {
 };
 
 const SAVED_DASHBOARD_KEY = "bank-valuation-dashboard-current";
-const DASHBOARD_DATA_VERSION = 2;
+const DASHBOARD_DATA_VERSION = 3;
 
 interface SavedDashboardState {
   dataVersion?: number;
+  industryId?: IndustryId;
   code: string;
   bankSearch: string;
   date: string;
@@ -313,11 +333,16 @@ const loadSavedDashboard = (): SavedDashboardState | null => {
 };
 
 const DEFAULT_BACKTEST_QUERY: StrategyBacktestQuery = {
+  universe_mode: "single",
+  industry_ids: ["bank"],
+  industry_weighting: "risk_parity",
+  max_industry_weight: 0.3,
+  crisis_cash_buffer: 0.1,
   years: 10,
   start_date: null,
   end_date: null,
   rebalance_frequency: "quarterly",
-  holding_count: 10,
+  holding_count: 12,
   min_dividend_yield: 0.03,
   min_dividend_safety: 55,
   min_stable_growth: 45,
@@ -335,30 +360,6 @@ const DEFAULT_BACKTEST_QUERY: StrategyBacktestQuery = {
   slippage_rate: 0.0001,
   cash_yield: 0.015,
 };
-
-const BACKTEST_PRESET_COMPARE_KEYS: Array<keyof StrategyBacktestQuery> = [
-  "years",
-  "start_date",
-  "end_date",
-  "rebalance_frequency",
-  "holding_count",
-  "min_dividend_yield",
-  "min_dividend_safety",
-  "min_stable_growth",
-  "max_risk_score",
-  "max_payout_ratio",
-  "dividend_weight",
-  "safety_weight",
-  "growth_weight",
-  "valuation_weight",
-  "risk_penalty_weight",
-  "initial_capital",
-  "commission_rate",
-  "stamp_duty_rate",
-  "transfer_fee_rate",
-  "slippage_rate",
-  "cash_yield",
-];
 
 type SavedBacktestPreset = {
   id: string;
@@ -1726,34 +1727,38 @@ function EmptyState() {
   );
 }
 
-function BankSearchBox({
+function StockSearchBox({
   value,
   selectedCode,
+  options,
+  industryLabel,
   onValueChange,
   onSelect,
 }: {
   value: string;
   selectedCode: string;
+  options: StockOptionList;
+  industryLabel: string;
   onValueChange: (value: string) => void;
   onSelect: (code: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const keyword = normalizeBankSearchText(value);
   const matches = useMemo(() => {
-    if (!keyword) return BANK_OPTIONS.slice(0, 10);
-    const filtered = BANK_OPTIONS.filter(([code, name]) =>
+    if (!keyword) return options.slice(0, 10);
+    const filtered = options.filter(([code, name]) =>
       bankSearchHaystack(code, name).includes(keyword),
     );
-    if (filtered.length === 0) return BANK_OPTIONS.slice(0, 10);
+    if (filtered.length === 0) return options.slice(0, 10);
     if (filtered.length === 1 && filtered[0][0] === selectedCode) {
-      const rest = BANK_OPTIONS.filter(([code]) => code !== selectedCode);
+      const rest = options.filter(([code]) => code !== selectedCode);
       return [...filtered, ...rest].slice(0, 10);
     }
     return filtered.slice(0, 10);
-  }, [keyword, selectedCode]);
-  const choose = (bankCode: string) => {
-    onSelect(bankCode);
-    onValueChange(formatBankOption(bankCode));
+  }, [keyword, options, selectedCode]);
+  const choose = (stockCode: string) => {
+    onSelect(stockCode);
+    onValueChange(formatStockOption(stockCode, options));
     setOpen(false);
   };
   return (
@@ -1764,7 +1769,7 @@ function BankSearchBox({
           const nextValue = event.target.value;
           onValueChange(nextValue);
           setOpen(true);
-          const resolved = resolveBankCode(nextValue, selectedCode);
+          const resolved = resolveStockCode(nextValue, selectedCode, options);
           if (/\d{6}/.test(nextValue) && resolved !== selectedCode) {
             onSelect(resolved);
           }
@@ -1780,30 +1785,30 @@ function BankSearchBox({
             setOpen(false);
           }
         }}
-        placeholder="输入代码或银行名"
-        aria-label="搜索银行"
+        placeholder={`输入代码或${industryLabel}名称`}
+        aria-label={`搜索${industryLabel}股票`}
         autoComplete="off"
       />
-      <button type="button" aria-label="展开银行列表" onClick={() => setOpen((current) => !current)}>
+      <button type="button" aria-label={`展开${industryLabel}股票列表`} onClick={() => setOpen((current) => !current)}>
         ▾
       </button>
       {open && (
         <div className="bank-search-menu">
           {matches.length > 0 ? (
-            matches.map(([bankCode, name]) => (
+            matches.map(([stockCode, name]) => (
               <button
                 type="button"
-                className={bankCode === selectedCode ? "active" : ""}
-                key={bankCode}
+                className={stockCode === selectedCode ? "active" : ""}
+                key={stockCode}
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => choose(bankCode)}
+                onClick={() => choose(stockCode)}
               >
-                <span>{bankCode}</span>
+                <span>{stockCode}</span>
                 <b>{name}</b>
               </button>
             ))
           ) : (
-            <p>没有匹配的银行</p>
+            <p>没有匹配的{industryLabel}股票</p>
           )}
         </div>
       )}
@@ -1972,8 +1977,17 @@ const rebalanceBacktestWeights = (
 
 const normalizeBacktestQuery = (query: StrategyBacktestQuery): StrategyBacktestQuery => ({
   ...query,
+  universe_mode: query.universe_mode ?? DEFAULT_BACKTEST_QUERY.universe_mode,
+  industry_ids: query.industry_ids?.length ? [...new Set(query.industry_ids)] : [...DEFAULT_BACKTEST_QUERY.industry_ids],
+  industry_weighting: query.industry_weighting ?? DEFAULT_BACKTEST_QUERY.industry_weighting,
+  max_industry_weight: roundTo(clamp(query.max_industry_weight ?? DEFAULT_BACKTEST_QUERY.max_industry_weight, .1, 1), 3),
+  crisis_cash_buffer: roundTo(clamp(query.crisis_cash_buffer ?? DEFAULT_BACKTEST_QUERY.crisis_cash_buffer, 0, .3), 3),
   years: Math.round(clamp(query.years, 3, 15)),
-  holding_count: Math.round(clamp(query.holding_count, 3, 20)),
+  holding_count: Math.round(clamp(
+    query.holding_count,
+    3,
+    query.industry_ids?.length === 1 && query.industry_ids[0] === "bank" ? 20 : 40,
+  )),
   min_dividend_yield: roundTo(clamp(query.min_dividend_yield, 0, .12), 4),
   min_dividend_safety: Math.round(clamp(query.min_dividend_safety, 0, 95)),
   min_stable_growth: Math.round(clamp(query.min_stable_growth, 0, 95)),
@@ -2014,6 +2028,17 @@ const validateBacktestDateRange = (query: StrategyBacktestQuery) => {
   return "";
 };
 
+const validateBacktestUniverse = (query: StrategyBacktestQuery) => {
+  const count = query.industry_ids?.length ?? 0;
+  if (count === 0) return "请至少选择一个回测行业";
+  if (query.universe_mode === "single" && count !== 1) return "单行业模式只能选择一个行业";
+  if (query.holding_count < count) return "持仓数量不能少于已选行业数量";
+  if (count > 1 && query.max_industry_weight * count + 1e-9 < 1 - query.crisis_cash_buffer) {
+    return `当前行业上限无法完成配置：至少需要把单行业上限设为 ${(((1 - query.crisis_cash_buffer) / count) * 100).toFixed(1)}%`;
+  }
+  return "";
+};
+
 const selectNumericInput = (event: ReactFocusEvent<HTMLInputElement>) => {
   event.currentTarget.select();
 };
@@ -2027,6 +2052,11 @@ const trimIntegerLeadingZeros = (event: FormEvent<HTMLInputElement>) => {
 
 const backtestQueryKey = (query: StrategyBacktestQuery) =>
   JSON.stringify({
+    universe_mode: query.universe_mode,
+    industry_ids: [...(query.industry_ids ?? [])].sort(),
+    industry_weighting: query.industry_weighting,
+    max_industry_weight: query.max_industry_weight,
+    crisis_cash_buffer: query.crisis_cash_buffer,
     years: query.years,
     start_date: query.start_date ?? null,
     end_date: query.end_date ?? null,
@@ -2479,15 +2509,29 @@ function BacktestLineChart({
         .find((snapshot) => snapshot.date <= activePoint.date)
     : null;
   const activeHoldings = activeSnapshot?.holdings ?? [];
+  const tooltipHoldingRows = activePoint
+    ? activeHoldings
+        .map((holding) => ({
+          holding,
+          contribution: holdingContribution(strategy, holding.stock_code, activePoint.date),
+        }))
+    : [];
   const tooltipHoldingStartY = 135;
   const tooltipHoldingRowGap = 11;
-  const tooltipHeight = Math.max(150, tooltipHoldingStartY + Math.max(activeHoldings.length, 1) * tooltipHoldingRowGap + 8);
-  const tooltipX = activeX > chartWidth - 228 ? activeX - 214 : activeX + 10;
+  const tooltipColumnWidth = 204;
+  const tooltipColumnCount = Math.min(4, Math.max(1, Math.ceil(tooltipHoldingRows.length / 4)));
+  const tooltipRowsPerColumn = Math.max(1, Math.ceil(tooltipHoldingRows.length / tooltipColumnCount));
+  const tooltipWidth = tooltipColumnWidth * tooltipColumnCount;
+  const tooltipHeight = Math.max(150, tooltipHoldingStartY + tooltipRowsPerColumn * tooltipHoldingRowGap + 8);
+  const preferredTooltipX = activeX + 10 + tooltipWidth <= chartWidth
+    ? activeX + 10
+    : activeX - tooltipWidth - 10;
+  const tooltipX = Math.max(0, Math.min(chartWidth - tooltipWidth, preferredTooltipX));
   const tooltipY = 0;
   return (
     <svg
       ref={svgRef}
-      className={`backtest-chart ${mode}`}
+      className={`backtest-chart ${mode}${activePoint ? " tooltip-active" : ""}`}
       viewBox={`0 0 ${chartWidth} 150`}
       role="img"
       aria-label={`${strategy.strategy_name}${mode === "equity" ? "净值曲线" : "回撤曲线"}`}
@@ -2524,7 +2568,7 @@ function BacktestLineChart({
           <line x1={chartLeft} y1={activeY} x2={chartRight} y2={activeY} />
           <circle cx={activeX} cy={activeY} r="4.5" />
           <g className="chart-tooltip" transform={`translate(${tooltipX},${tooltipY})`}>
-            <rect width="204" height={tooltipHeight} rx="12" />
+            <rect width={tooltipWidth} height={tooltipHeight} rx="12" />
             <line className="tooltip-divider" x1="12" y1="24" x2="192" y2="24" />
             <line className="tooltip-divider subtle" x1="12" y1="109" x2="192" y2="109" />
             <text className="date" x="12" y="16">{activePoint.date}</text>
@@ -2547,16 +2591,23 @@ function BacktestLineChart({
               <tspan>成本</tspan><tspan className="value" x="192" textAnchor="end">{capitalMoney(activeCost)}</tspan>
             </text>
             <text className="holdings-title" x="12" y="121">
-              持仓 {activeSnapshot ? `${activeSnapshot.date} · ${activeHoldings.length}只` : "暂无快照"}
+              持仓浮盈亏 {activeSnapshot ? `${activeSnapshot.date} · ${activeHoldings.length}只` : "暂无快照"}
             </text>
-            {activeHoldings.map((holding, index) => {
-              const contribution = holdingContribution(strategy, holding.stock_code, activePoint.date);
+            {tooltipHoldingRows.map(({ holding, contribution }, index) => {
+              const columnIndex = Math.floor(index / tooltipRowsPerColumn);
+              const rowIndex = index % tooltipRowsPerColumn;
+              const columnX = columnIndex * tooltipColumnWidth;
               return (
-                <text className="holding-row" x="12" y={tooltipHoldingStartY + index * tooltipHoldingRowGap} key={holding.stock_code}>
-                  <tspan>{holding.stock_name}</tspan>
-                  <tspan className="muted" dx="4">{contribution.holdingDays}天</tspan>
-                  <tspan className="value" x="192" textAnchor="end">{capitalMoney(contribution.profit)}</tspan>
-                </text>
+              <text
+                className="holding-row"
+                x={columnX + 12}
+                y={tooltipHoldingStartY + rowIndex * tooltipHoldingRowGap}
+                key={holding.stock_code}
+              >
+                <tspan>{holding.stock_name}</tspan>
+                <tspan className="muted" dx="4">{contribution.holdingDays}天</tspan>
+                <tspan className="value" x={columnX + 192} textAnchor="end">{capitalMoney(contribution.profit)}</tspan>
+              </text>
               );
             })}
           </g>
@@ -2575,6 +2626,7 @@ function BacktestPage({
   error,
   preparing,
   query,
+  activeIndustryId,
   onQueryChange,
   onRunWithQuery,
   onRefresh,
@@ -2585,6 +2637,7 @@ function BacktestPage({
   error: string;
   preparing: boolean;
   query: StrategyBacktestQuery;
+  activeIndustryId: IndustryId;
   onQueryChange: (query: StrategyBacktestQuery) => void;
   onRunWithQuery: (query: StrategyBacktestQuery) => void;
   onRefresh: () => void;
@@ -2641,8 +2694,9 @@ function BacktestPage({
       }),
     });
   }, [weightTotal]);
+  const defaultForActiveIndustry = { ...DEFAULT_BACKTEST_QUERY, industry_ids: [activeIndustryId] };
   const isPresetActive = (preset: StrategyBacktestQuery) => (
-    BACKTEST_PRESET_COMPARE_KEYS.every((key) => query[key] === preset[key])
+    backtestQueryKey(normalizeBacktestQuery(query)) === backtestQueryKey(normalizeBacktestQuery(preset))
   );
   const applyPreset = (preset: StrategyBacktestQuery) => {
     setOptimizationError("");
@@ -2678,8 +2732,8 @@ function BacktestPage({
     writeSavedBacktestPresets(next);
   };
   const runOptimization = async () => {
-    if (dateRangeError) {
-      setOptimizationError(dateRangeError);
+    if (validationError) {
+      setOptimizationError(validationError);
       return;
     }
     setOptimizing(true);
@@ -2740,6 +2794,14 @@ function BacktestPage({
     ?? 0;
   const buyCostRate = query.commission_rate + query.transfer_fee_rate + query.slippage_rate;
   const dateRangeError = validateBacktestDateRange(query);
+  const universeError = validateBacktestUniverse(query);
+  const validationError = dateRangeError || universeError;
+  const selectedIndustryIds = query.industry_ids?.length ? query.industry_ids : [activeIndustryId];
+  const selectedIndustryNames = selectedIndustryIds
+    .filter((id): id is IndustryId => id in INDUSTRY_MAP)
+    .map((id) => INDUSTRY_MAP[id].shortLabel);
+  const isBankOnly = selectedIndustryIds.length === 1 && selectedIndustryIds[0] === "bank";
+  const benchmarkLabel = selectedIndustryIds.length > 1 ? "所选股票池等权基准" : `${selectedIndustryNames[0] ?? "行业"}等权基准`;
   useEffect(() => {
     localStorage.setItem("bank-backtest-chart-height", `${chartHeight}`);
   }, [chartHeight]);
@@ -2757,15 +2819,15 @@ function BacktestPage({
     <div className="backtest-page fade-in">
       <div className="reversion-head">
         <div>
-          <span className="eyebrow">DIVIDEND STRATEGY BACKTEST</span>
-          <h1>高股息银行策略回测</h1>
-          <p>{backtest ? `${backtest.start_date} 至 ${backtest.end_date}` : "等待回测结果"}</p>
+          <span className="eyebrow">MULTI-SECTOR DEFENSIVE BACKTEST</span>
+          <h1>跨行业高股息与防御策略回测</h1>
+          <p>{backtest ? `${backtest.start_date} 至 ${backtest.end_date}` : `${selectedIndustryNames.join(" / ")} · 等待回测结果`}</p>
         </div>
         <div className="reversion-actions">
-          <button className="refresh-button" type="button" onClick={onPrepare} disabled={loading || preparing || optimizing || Boolean(dateRangeError)}>
+          <button className="refresh-button" type="button" onClick={onPrepare} disabled={loading || preparing || optimizing || Boolean(validationError)}>
             {preparing ? "拉取中..." : "拉取缓存并重试"}
           </button>
-          <button className="refresh-button primary" type="button" onClick={onRefresh} disabled={loading || preparing || optimizing || Boolean(dateRangeError)}>
+          <button className="refresh-button primary" type="button" onClick={onRefresh} disabled={loading || preparing || optimizing || Boolean(validationError)}>
             {loading ? "回测中..." : "运行回测"}
           </button>
         </div>
@@ -2779,8 +2841,8 @@ function BacktestPage({
           <div className="backtest-presets">
             <button
               type="button"
-              className={isPresetActive(DEFAULT_BACKTEST_QUERY) ? "active" : ""}
-              onClick={() => applyPreset(DEFAULT_BACKTEST_QUERY)}
+              className={isPresetActive(defaultForActiveIndustry) ? "active" : ""}
+              onClick={() => applyPreset(defaultForActiveIndustry)}
               disabled={loading || preparing || optimizing}
             >
               默认
@@ -2789,7 +2851,7 @@ function BacktestPage({
               type="button"
               className="optimizer-trigger"
               onClick={() => void runOptimization()}
-              disabled={loading || preparing || optimizing || Boolean(dateRangeError)}
+              disabled={loading || preparing || optimizing || Boolean(validationError)}
             >
               {optimizing ? "计算中..." : "智能寻优"}
             </button>
@@ -2826,6 +2888,30 @@ function BacktestPage({
             </div>
           </div>
         </div>
+        <IndustryUniverseBuilder
+          query={query}
+          activeIndustryId={activeIndustryId}
+          disabled={loading || preparing || optimizing}
+          onChange={onQueryChange}
+        />
+        <div className="backtest-control-grid industry-allocation-controls">
+          <label>
+            <ParamLabel label="行业配置方式" tooltip="行业等权简单透明；防御风险预算会降低高周期行业权重；评分加权更偏向当前综合分高的行业。" />
+            <select value={query.industry_weighting} onChange={(event) => updateQuery("industry_weighting", event.target.value as StrategyBacktestQuery["industry_weighting"])}>
+              <option value="risk_parity">防御风险预算</option>
+              <option value="equal">行业等权</option>
+              <option value="score">综合评分加权</option>
+            </select>
+          </label>
+          <label>
+            <ParamLabel label="单行业权重上限" tooltip="多行业组合中限制单一行业集中度。3-4 个行业可用 30%-40%，全行业可从 20%-25% 开始。" />
+            <NumberStepper ariaLabel="单行业权重上限" min={10} max={100} step={1} value={query.max_industry_weight * 100} onChange={(value) => updateQuery("max_industry_weight", value / 100)} />
+          </label>
+          <label>
+            <ParamLabel label="危机缓冲仓" tooltip="预留现金或短债，避免流动性黑天鹅时所有行业相关性同时升高。允许 0%-30%。" />
+            <NumberStepper ariaLabel="危机缓冲仓" min={0} max={30} step={1} value={query.crisis_cash_buffer * 100} onChange={(value) => updateQuery("crisis_cash_buffer", value / 100)} />
+          </label>
+        </div>
         <div className="backtest-control-grid">
           <label>
             <ParamLabel label="开始日期" tooltip="回测起点。建议至少覆盖一轮完整牛熊周期；做 10 年稳定性测试时可从 2016 年附近开始。" />
@@ -2840,7 +2926,7 @@ function BacktestPage({
             <NumberStepper ariaLabel="未选日期时年数" min={3} max={15} value={query.years} onChange={(value) => updateQuery("years", value)} />
           </label>
           <label>
-            <ParamLabel label="调仓频率" tooltip="调仓越频繁越灵敏，但交易成本和换手也更高。银行股高股息策略通常先用每季；想更稳可试半年。" />
+            <ParamLabel label="调仓频率" tooltip="调仓越频繁越灵敏，但交易成本和换手也更高。跨行业防御策略通常先用每季或半年。" />
             <select value={query.rebalance_frequency} onChange={(event) => updateQuery("rebalance_frequency", event.target.value as StrategyBacktestQuery["rebalance_frequency"])}>
               <option value="monthly">每月</option>
               <option value="quarterly">每季</option>
@@ -2849,11 +2935,11 @@ function BacktestPage({
             </select>
           </label>
           <label>
-            <ParamLabel label="持仓数量" tooltip="组合持有几只银行。数量少更集中、波动可能更大；8-12 只通常较平衡，低回撤可偏 10-15。" />
-            <NumberStepper ariaLabel="持仓数量" min={3} max={20} value={query.holding_count} onChange={(value) => updateQuery("holding_count", value)} />
+            <ParamLabel label="持仓数量" tooltip="组合总持仓数量。单行业可从 6-10 只开始，多行业可用 12-24 只并同时限制行业权重。" />
+            <NumberStepper ariaLabel="持仓数量" min={3} max={isBankOnly ? 20 : 40} value={query.holding_count} onChange={(value) => updateQuery("holding_count", value)} />
           </label>
           <label>
-            <ParamLabel label="最低股息率" tooltip="低于该股息率的银行会被排除。3%-4%适合稳健筛选；设太高容易只剩高息但基本面承压的股票。" />
+            <ParamLabel label="最低股息率" tooltip="按估值日前365日内已实施、已有除息日的每股现金分红合计 ÷ 当日不复权收盘价；同一除息事件去重，缺数据不参与筛选。" />
             <NumberStepper ariaLabel="最低股息率" min={0} max={20} step={0.1} decimals={1} value={query.min_dividend_yield * 100} onChange={(value) => updateQuery("min_dividend_yield", value / 100)} />
           </label>
           <label>
@@ -2861,17 +2947,19 @@ function BacktestPage({
             <NumberStepper ariaLabel="股息安全分" min={0} max={100} value={query.min_dividend_safety} onChange={(value) => updateQuery("min_dividend_safety", value)} />
           </label>
           <label>
-            <ParamLabel label="稳定增长分" tooltip="衡量利润、ROE 等稳定程度。设高可避开利润转弱银行；如果市场整体承压，过高会导致候选不足。" />
+            <ParamLabel label="稳定增长分" tooltip="由行业专属原始指标映射而来，例如银行看 ROE/资产质量，水电看来水周期，消费看现金转化与份额。" />
             <NumberStepper ariaLabel="稳定增长分" min={0} max={100} value={query.min_stable_growth} onChange={(value) => updateQuery("min_stable_growth", value)} />
           </label>
           <label>
             <ParamLabel label="最高风险分" tooltip="风险分高于该值会被剔除。低回撤建议 30-40；如果想提高收益弹性，可放宽到 45-50 后观察回撤是否明显变差。" />
             <NumberStepper ariaLabel="最高风险分" min={0} max={100} value={query.max_risk_score} onChange={(value) => updateQuery("max_risk_score", value)} />
           </label>
-          <label>
-            <ParamLabel label="派息率上限" tooltip="派息率过高说明利润对分红覆盖不足。稳健股息策略常用 70%-85%；超过 100%通常要谨慎。" />
-            <NumberStepper ariaLabel="派息率上限" min={0} max={150} value={query.max_payout_ratio * 100} onChange={(value) => updateQuery("max_payout_ratio", value / 100)} />
-          </label>
+          {isBankOnly && (
+            <label>
+              <ParamLabel label="派息率上限" tooltip="银行派息率过高会侵蚀资本缓冲。跨行业模式改用行业内标准化的股息安全分，因此不显示这一银行专属门槛。" />
+              <NumberStepper ariaLabel="派息率上限" min={0} max={150} value={query.max_payout_ratio * 100} onChange={(value) => updateQuery("max_payout_ratio", value / 100)} />
+            </label>
+          )}
           <label>
             <ParamLabel label="初始资金(万)" tooltip="用于把净值收益换算成真实金额，比如填 100 表示初始资金 100 万。" />
             <NumberStepper ariaLabel="初始资金万元" min={1} max={100000} value={query.initial_capital / 10000} onChange={(value) => updateQuery("initial_capital", value * 10000)} />
@@ -2885,7 +2973,7 @@ function BacktestPage({
             <NumberStepper ariaLabel="卖出印花税" min={0} max={2} step={0.01} decimals={2} value={query.stamp_duty_rate * 100} onChange={(value) => updateQuery("stamp_duty_rate", value / 100)} />
           </label>
         </div>
-        {dateRangeError && <p className="backtest-inline-error">{dateRangeError}</p>}
+        {validationError && <p className="backtest-inline-error">{validationError}</p>}
         <div className="weight-head">
           <span>权重分配</span>
           <b>总和 {weightTotal.toFixed(2)} / 1.00</b>
@@ -2937,10 +3025,11 @@ function BacktestPage({
           </div>
         )}
       </section>
+      <DiversificationBlueprint query={query} />
       {error && (
         <div className="error backtest-error">
           {error}
-          <span>如果是缓存缺失，点击“拉取缓存并重试”会逐家刷新银行数据，完成后自动重新回测；如果提示无法连接后端，请先启动 8000 端口服务。</span>
+          <span>{isBankOnly ? "如果是缓存缺失，点击“拉取缓存并重试”会刷新银行样本。" : "跨行业范围会提交到通用策略接口；若接口尚未接入，页面会保留当前行业配置，不会回退成银行结果。"}</span>
           <button type="button" onClick={onPrepare} disabled={loading || preparing || optimizing}>
             {preparing ? "正在拉取缓存..." : "拉取缓存并重试"}
           </button>
@@ -3003,7 +3092,7 @@ function BacktestPage({
                       </span>
                       <span className="chart-legend">
                         <i className="strategy-dot" />策略
-                        <i className="benchmark-dot" />银行等权基准
+                        <i className="benchmark-dot" />{benchmarkLabel}
                       </span>
                     </span>
                     <BacktestLineChart
@@ -3054,7 +3143,9 @@ function BacktestPage({
                           <span>{item.stock_code}</span>
                           <strong>{purePct(item.weight)}</strong>
                           <small>
-                            持仓 {contribution.holdingDays}天 · 贡献 {capitalMoney(contribution.profit)} · 股息 {purePct(item.dividend_yield)} · 风险 {item.risk_score.toFixed(1)}
+                            持仓 {contribution.holdingDays}天 · 浮盈亏 {capitalMoney(contribution.profit)}
+                            {item.cost_basis ? ` / ${purePct(item.profit_return ?? 0)} · 市值 ${capitalMoney(item.position_value ?? 0)} · 成本 ${capitalMoney(item.cost_basis)}` : ""}
+                            {` · 近365日股息 ${item.dividend_yield == null ? "暂无数据" : purePct(item.dividend_yield)} · 风险 ${item.risk_score.toFixed(1)}`}
                           </small>
                         </button>
                       );
@@ -3075,14 +3166,19 @@ export default function App() {
   const savedDashboard = useMemo(loadSavedDashboard, []);
   const [theme, setTheme] = useState<UiTheme>(initialTheme);
   const [page, setPage] = useState<Page>("overview");
-  const [code, setCode] = useState(savedDashboard?.code ?? "601398");
-  const [bankSearch, setBankSearch] = useState(savedDashboard?.bankSearch ?? formatBankOption("601398"));
+  const [activeIndustryId, setActiveIndustryId] = useState<IndustryId>(savedDashboard?.industryId ?? "bank");
+  const [code, setCode] = useState(savedDashboard?.code ?? "600036");
+  const [bankSearch, setBankSearch] = useState(savedDashboard?.bankSearch ?? formatBankOption("600036"));
+  const [industrySelections, setIndustrySelections] = useState<Partial<Record<IndustryId, string>>>({
+    bank: savedDashboard?.code ?? "600036",
+  });
   const [date, setDate] = useState(savedDashboard?.date ?? localToday);
   const [result, setResult] = useState<ValuationResult | null>(savedDashboard?.result ?? null);
   const [liveQuote, setLiveQuote] = useState<LiveQuote | null>(null);
   const [liveQuoteError, setLiveQuoteError] = useState("");
   const [monte, setMonte] = useState<MonteCarloResult | null>(savedDashboard?.monte ?? null);
   const [benchmark, setBenchmark] = useState<IndustryBenchmark | null>(savedDashboard?.benchmark ?? null);
+  const [industryAnalysis, setIndustryAnalysis] = useState<IndustryAnalysisResult | null>(null);
   const [benchmarkLoading, setBenchmarkLoading] = useState(false);
   const [reversion, setReversion] = useState<BankMeanReversionOverview | null>(null);
   const [reversionLoading, setReversionLoading] = useState(false);
@@ -3095,31 +3191,42 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [marketLagNoticeVisible, setMarketLagNoticeVisible] = useState(false);
-  const rating = result ? RATING[result.final_rating] : null;
-  const marketDateLagged = Boolean(result?.market_date && date && result.market_date < date);
-  const displayedPrice = liveQuote?.price ?? result?.current_price ?? null;
-  const displayedChangePct = liveQuote?.change_pct ?? result?.daily_change_pct ?? null;
+  const activeIndustry = INDUSTRY_MAP[activeIndustryId];
+  const activeStockOptions = useMemo<StockOptionList>(
+    () => activeIndustryId === "bank" ? BANK_OPTIONS : stockOptionsForIndustry(activeIndustry),
+    [activeIndustryId, activeIndustry],
+  );
+  const activeBankResult = activeIndustryId === "bank"
+    && result
+    && normalizeStockCode(result.stock_code) === normalizeStockCode(code)
+    ? result
+    : null;
+  const rating = activeBankResult ? RATING[activeBankResult.final_rating] : null;
+  const marketDateLagged = Boolean(activeBankResult?.market_date && date && activeBankResult.market_date < date);
+  const displayedPrice = liveQuote?.price ?? activeBankResult?.current_price ?? null;
+  const displayedChangePct = liveQuote?.change_pct ?? activeBankResult?.daily_change_pct ?? null;
   const displayedChange = liveQuote?.change ?? null;
   const displayedPb =
-    result && displayedPrice !== null && result.current_price > 0
-      ? result.current_pb * (displayedPrice / result.current_price)
-      : result?.current_pb ?? null;
+    activeBankResult && displayedPrice !== null && activeBankResult.current_price > 0
+      ? activeBankResult.current_pb * (displayedPrice / activeBankResult.current_price)
+      : activeBankResult?.current_pb ?? null;
   const visiblePage = useMemo(
-    () => (result || page === "reversion" || page === "backtest" || page === "methods" ? page : "overview"),
-    [page, result],
+    () => (activeIndustryId !== "bank" || activeBankResult || page === "reversion" || page === "backtest" || page === "methods" ? page : "overview"),
+    [activeBankResult, activeIndustryId, page],
   );
 
   useEffect(() => {
-    if (visiblePage === "reversion" && !reversion && !reversionLoading) {
+    if (activeIndustryId === "bank" && visiblePage === "reversion" && !reversion && !reversionLoading) {
       void loadMeanReversion(false);
     }
-  }, [visiblePage]);
+  }, [activeIndustryId, visiblePage]);
 
   useEffect(() => {
-    if (visiblePage === "backtest" && !backtest && !backtestLoading) {
+    const bankOnly = backtestQuery.industry_ids.length === 1 && backtestQuery.industry_ids[0] === "bank";
+    if (visiblePage === "backtest" && bankOnly && !backtest && !backtestLoading) {
       void loadBacktest();
     }
-  }, [visiblePage]);
+  }, [visiblePage, backtestQuery.industry_ids.join("|")]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -3148,14 +3255,15 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    if (!result) return;
+    if (!activeBankResult || activeIndustryId !== "bank") return;
     try {
       const payload: SavedDashboardState = {
         dataVersion: DASHBOARD_DATA_VERSION,
+        industryId: "bank",
         code,
         bankSearch,
         date,
-        result,
+        result: activeBankResult,
         monte,
         benchmark,
         savedAt: new Date().toISOString(),
@@ -3164,16 +3272,17 @@ export default function App() {
     } catch (err) {
       console.warn("[Bank Valuation] failed to save dashboard state", err);
     }
-  }, [result, monte, benchmark, code, bankSearch, date]);
+  }, [activeBankResult, activeIndustryId, monte, benchmark, code, bankSearch, date]);
 
   useEffect(() => {
     if (!marketLagNoticeVisible) return;
     const timer = window.setTimeout(() => setMarketLagNoticeVisible(false), 30_000);
     return () => window.clearTimeout(timer);
-  }, [marketLagNoticeVisible, result?.market_date, date]);
+  }, [marketLagNoticeVisible, activeBankResult?.market_date, date]);
 
   useEffect(() => {
-    if (!result?.stock_code) {
+    const quoteStockCode = activeIndustryId === "bank" ? activeBankResult?.stock_code : code;
+    if (!quoteStockCode) {
       setLiveQuote(null);
       setLiveQuoteError("");
       return;
@@ -3182,7 +3291,7 @@ export default function App() {
     let active = true;
     const load = async () => {
       try {
-        const quote = await getLiveQuote(result.stock_code);
+        const quote = await getLiveQuote(quoteStockCode);
         if (!active) return;
         setLiveQuote(quote);
         setLiveQuoteError("");
@@ -3200,7 +3309,7 @@ export default function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [result?.stock_code]);
+  }, [activeBankResult?.stock_code, activeIndustryId, code]);
 
   async function loadMeanReversion(forceRefresh = false) {
     setReversionLoading(true);
@@ -3219,7 +3328,7 @@ export default function App() {
     /缓存|cache|快照|本地|历史不足|生成缓存/i.test(message);
 
   async function prepareBacktestData(params = backtestQuery) {
-    const validationError = validateBacktestDateRange(params);
+    const validationError = validateBacktestDateRange(params) || validateBacktestUniverse(params);
     if (validationError) {
       setBacktestError(validationError);
       return;
@@ -3227,9 +3336,14 @@ export default function App() {
     setBacktestPreparing(true);
     setBacktestError("");
     try {
-      const overview = await getMeanReversionOverview(date, true, true);
-      setReversion(overview);
-      const response = await getStrategyBacktest(params);
+      const bankOnly = params.industry_ids.length === 1 && params.industry_ids[0] === "bank";
+      if (bankOnly) {
+        const overview = await getMeanReversionOverview(date, true, true);
+        setReversion(overview);
+      }
+      const response = bankOnly
+        ? await getStrategyBacktest(params)
+        : await prepareStrategyBacktest(params);
       setBacktest(response);
     } catch (err) {
       setBacktestError(err instanceof Error ? err.message : "自动拉取缓存失败，请确认后端和数据源可用");
@@ -3239,19 +3353,21 @@ export default function App() {
   }
 
   async function loadBacktest(params = backtestQuery, allowAutoPrepare = true) {
-    const validationError = validateBacktestDateRange(params);
+    const validationError = validateBacktestDateRange(params) || validateBacktestUniverse(params);
     if (validationError) {
       setBacktestError(validationError);
       return;
     }
     setBacktestLoading(true);
     setBacktestError("");
+    setBacktest(null);
     try {
       const response = await getStrategyBacktest(params);
       setBacktest(response);
     } catch (err) {
       const message = err instanceof Error ? err.message : "暂时无法完成策略回测";
-      if (allowAutoPrepare && shouldPrepareBacktestCache(message)) {
+      const bankOnly = params.industry_ids.length === 1 && params.industry_ids[0] === "bank";
+      if (bankOnly && allowAutoPrepare && shouldPrepareBacktestCache(message)) {
         setBacktestLoading(false);
         await prepareBacktestData(params);
         return;
@@ -3267,6 +3383,8 @@ export default function App() {
     setError("");
     setLiveQuote(null);
     setLiveQuoteError("");
+    setMonte(null);
+    setBenchmark(null);
     setPage("overview");
     try {
       // Baostock keeps process-global socket state. Request sequentially so a
@@ -3298,17 +3416,80 @@ export default function App() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const resolvedCode = resolveBankCode(bankSearch, code);
+    const resolvedCode = resolveStockCode(bankSearch, code, activeStockOptions);
     setCode(resolvedCode);
-    setBankSearch(formatBankOption(resolvedCode));
-    await runAnalysis(false, resolvedCode);
+    setBankSearch(formatStockOption(resolvedCode, activeStockOptions));
+    setIndustrySelections((current) => ({ ...current, [activeIndustryId]: resolvedCode }));
+    if (activeIndustryId === "bank") {
+      await runAnalysis(false, resolvedCode);
+      return;
+    }
+    setError("");
+    setLoading(true);
+    setIndustryAnalysis(null);
+    try {
+      const analysis = await getIndustryAnalysis(activeIndustryId, resolvedCode, date, false);
+      setIndustryAnalysis(analysis);
+      setPage("overview");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "暂时无法完成行业分析");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function selectReversionStock(stockCode: string) {
-    const plainCode = stockCode.includes(".") ? stockCode.split(".")[1] : stockCode;
+    const plainCode = normalizeStockCode(stockCode);
+    setActiveIndustryId("bank");
     setCode(plainCode);
     setBankSearch(formatBankOption(plainCode));
+    setIndustrySelections((current) => ({ ...current, bank: plainCode }));
     void runAnalysis(false, plainCode);
+  }
+
+  function changeIndustry(nextIndustryId: IndustryId) {
+    if (nextIndustryId === activeIndustryId) return;
+    const nextIndustry = INDUSTRY_MAP[nextIndustryId];
+    const nextOptions: StockOptionList = nextIndustryId === "bank" ? BANK_OPTIONS : stockOptionsForIndustry(nextIndustry);
+    const nextCode = industrySelections[nextIndustryId] ?? nextOptions[0]?.[0] ?? "600036";
+    setIndustrySelections((current) => ({ ...current, [activeIndustryId]: code, [nextIndustryId]: nextCode }));
+    setActiveIndustryId(nextIndustryId);
+    setCode(nextCode);
+    setBankSearch(formatStockOption(nextCode, nextOptions));
+    setPage("overview");
+    setError("");
+    setLiveQuote(null);
+    setLiveQuoteError("");
+    setMarketLagNoticeVisible(false);
+    setIndustryAnalysis(null);
+    if (backtestQuery.universe_mode === "single") {
+      setBacktestQuery((current) => ({
+        ...current,
+        industry_ids: [nextIndustryId],
+        holding_count: nextIndustryId === "bank" ? Math.min(current.holding_count, 20) : current.holding_count,
+      }));
+      setBacktest(null);
+      setBacktestError("");
+    }
+  }
+
+  function selectIndustryStock(stockCode: string) {
+    const normalized = normalizeStockCode(stockCode);
+    setCode(normalized);
+    setBankSearch(formatStockOption(normalized, activeStockOptions));
+    setIndustrySelections((current) => ({ ...current, [activeIndustryId]: normalized }));
+    setIndustryAnalysis(null);
+    setPage("overview");
+  }
+
+  function changeBacktestQuery(nextQuery: StrategyBacktestQuery) {
+    const previousUniverse = `${backtestQuery.universe_mode}:${[...backtestQuery.industry_ids].sort().join("|")}`;
+    const nextUniverse = `${nextQuery.universe_mode}:${[...nextQuery.industry_ids].sort().join("|")}`;
+    if (previousUniverse !== nextUniverse) {
+      setBacktest(null);
+      setBacktestError("");
+    }
+    setBacktestQuery(nextQuery);
   }
 
   return (
@@ -3316,24 +3497,24 @@ export default function App() {
       <Particles />
       <aside className="sidebar">
         <div className="brand">
-          <i>银</i>
+          <i>{activeIndustry.icon}</i>
           <div>
-            <b>银栖</b>
-            <span>Banking, gently.</span>
+            <b>衡栖</b>
+            <span>Resilience, gently.</span>
           </div>
         </div>
         <nav>
           {(
             [
-              ["overview", "概览", false],
-              ["reversion", "银行排序", false],
+              ["overview", activeIndustry.nav.overview, false],
+              ["reversion", activeIndustry.nav.ranking, false],
               ["backtest", "策略回测", false],
-              ["details", "数据全景", true],
-              ["scenarios", "情景推演", true],
-              ["methods", "模型说明", false],
+              ["details", activeIndustry.nav.details, true],
+              ["scenarios", activeIndustry.nav.scenarios, true],
+              ["methods", activeIndustry.nav.methods, false],
             ] as [Page, string, boolean][]
           ).map(([key, label, requiresResult]) => {
-            const disabled = requiresResult && !result;
+            const disabled = activeIndustryId === "bank" && requiresResult && !activeBankResult;
             return (
               <button
                 className={`${visiblePage === key ? "active" : ""} ${disabled ? "disabled" : ""}`}
@@ -3377,33 +3558,39 @@ export default function App() {
         </div>
       </aside>
       <div className="content">
-        <header>
-          <div>
-            <span className="eyebrow">A-SHARE BANK VALUATION</span>
+        <header className="workspace-header">
+          <div className="workspace-title">
+            <span className="eyebrow">A-SHARE MULTI-SECTOR DEFENSIVE VALUE</span>
             <h1>{THEME_META[theme].title}</h1>
+            <p>{activeIndustry.label} · {activeIndustry.summary}</p>
           </div>
-          <form onSubmit={submit}>
-            <label>
-              股票代码
-              <BankSearchBox
-                value={bankSearch}
-                selectedCode={code}
-                onValueChange={setBankSearch}
-                onSelect={setCode}
-              />
-            </label>
-            <label>
-              估值日期
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-              />
-            </label>
-            <button className="query-button" disabled={loading}>
-              {loading ? "正在取数…" : "开始分析 →"}
-            </button>
-          </form>
+          <div className="analysis-dock">
+            <IndustryTabs value={activeIndustryId} onChange={changeIndustry} />
+            <form className="analysis-form" onSubmit={submit}>
+              <label>
+                {activeIndustry.shortLabel}龙头
+                <StockSearchBox
+                  value={bankSearch}
+                  selectedCode={code}
+                  options={activeStockOptions}
+                  industryLabel={activeIndustry.shortLabel}
+                  onValueChange={setBankSearch}
+                  onSelect={selectIndustryStock}
+                />
+              </label>
+              <label>
+                估值日期
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                />
+              </label>
+              <button className="query-button" disabled={loading}>
+                {loading ? "正在取数…" : "开始分析 →"}
+              </button>
+            </form>
+          </div>
         </header>
         {theme === "gundam" && (
           <section className="gundam-visual-banner" aria-label="机甲机库主题主视觉">
@@ -3420,15 +3607,15 @@ export default function App() {
         {error && (
           <div className="error">
             {error}
-            <span>请确认后端已在 8000 端口启动，且 Baostock 网络可访问。</span>
+            <span>{activeIndustryId === "bank" ? "请确认银行分析服务和 Baostock 数据源可访问。" : "当前行业数据接口暂不可用，请稍后重试。"}</span>
           </div>
         )}
-        {result && marketDateLagged && marketLagNoticeVisible && (
+        {activeBankResult && marketDateLagged && marketLagNoticeVisible && (
           <div className="market-lag transient">
             <div>
               <b>市场数据还没有更新到你选择的日期</b>
               <span>
-                你选择的是 {date}，当前接口实际拿到的最近可用收盘日是 {result.market_date}。
+                你选择的是 {date}，当前接口实际拿到的最近可用收盘日是 {activeBankResult.market_date}。
                 这通常是当天尚未收盘、Baostock 还未发布日线，或数据源延迟导致；估值已先使用最近交易日数据。
               </span>
             </div>
@@ -3437,7 +3624,7 @@ export default function App() {
             </button>
           </div>
         )}
-        {!result && !loading && !error && !["reversion", "backtest"].includes(visiblePage) && <EmptyState />}
+        {activeIndustryId === "bank" && !activeBankResult && !loading && !error && !["reversion", "backtest", "methods"].includes(visiblePage) && <EmptyState />}
         {loading && (
           <div className="loading">
             <span />
@@ -3445,7 +3632,7 @@ export default function App() {
             <span /> 正在整理市场、财报与分红数据
           </div>
         )}
-        {visiblePage === "reversion" && (
+        {activeIndustryId === "bank" && visiblePage === "reversion" && (
           <MeanReversionPage
             overview={reversion}
             loading={reversionLoading}
@@ -3461,16 +3648,29 @@ export default function App() {
             error={backtestError}
             preparing={backtestPreparing}
             query={backtestQuery}
-            onQueryChange={setBacktestQuery}
+            activeIndustryId={activeIndustryId}
+            onQueryChange={changeBacktestQuery}
             onRunWithQuery={(nextQuery) => {
-              setBacktestQuery(nextQuery);
+              changeBacktestQuery(nextQuery);
               void loadBacktest(nextQuery);
             }}
             onRefresh={() => void loadBacktest()}
             onPrepare={() => void prepareBacktestData()}
           />
         )}
-        {result && visiblePage === "overview" && (
+        {activeIndustryId !== "bank" && visiblePage !== "backtest" && (
+          <IndustryWorkspace
+            industry={activeIndustry}
+            page={visiblePage as Exclude<Page, "backtest">}
+            stockCode={code}
+            quote={liveQuote}
+            quoteError={liveQuoteError}
+            valuationDate={date}
+            analysis={industryAnalysis}
+            onSelectStock={selectIndustryStock}
+          />
+        )}
+        {activeBankResult && result && visiblePage === "overview" && (
           <div className="overview fade-in">
             <section className="hero-card">
               <div>
@@ -3584,13 +3784,13 @@ export default function App() {
             </section>
           </div>
         )}
-        {result && visiblePage === "scenarios" && (
+        {activeIndustryId === "bank" && activeBankResult && result && visiblePage === "scenarios" && (
           <div className="fade-in">
             <ScenarioPage result={result} />
             <ScenarioConditions result={result} />
           </div>
         )}
-        {result && visiblePage === "details" && (
+        {activeIndustryId === "bank" && activeBankResult && result && visiblePage === "details" && (
           <div className="details-with-industry fade-in">
             <RiskInsights result={result} monte={monte} />
             <IndustryBenchmarkCard
@@ -3600,7 +3800,7 @@ export default function App() {
             <DetailsPage result={result} />
           </div>
         )}
-        {visiblePage === "methods" && <MethodPage />}
+        {activeIndustryId === "bank" && visiblePage === "methods" && <MethodPage />}
       </div>
     </main>
   );
