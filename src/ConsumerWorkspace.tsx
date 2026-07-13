@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { LiveQuote } from "./api";
 import { findIndustryStock, type IndustryConfig } from "./industryConfig";
 import type { IndustryAnalysisResult, IndustryRankingResponse } from "./types";
+import { industryValuationPercentiles } from "./industryValuation";
 
 type ConsumerPage = "overview" | "reversion" | "details" | "scenarios" | "methods";
 
@@ -129,7 +130,7 @@ function ConsumerHeader({ industry, stockCode, quote, analysis, valuationDate }:
         <span>{quote ? "实时价格" : "估值收盘"}</span>
         <b>{money(quote?.price ?? analysis?.current_price)}</b>
         <small>{quote ? `${quote.quote_date} ${quote.quote_time}` : analysis?.market_date ?? valuationDate}</small>
-        <em>{analysis ? `${analysis.valuation_metric.toUpperCase()} 五年分位 ${pct(analysis.valuation_percentile)}` : "分析后显示估值分位"}</em>
+        <em>{industryValuationPercentiles(analysis)}</em>
       </div>
       <div className="consumer-score-card">
         <span>消费研究框架分</span><b>{score}</b>
@@ -199,7 +200,7 @@ function ConsumerOverview({ industry, stockCode, analysis }: { industry: Industr
 function ConsumerRanking({ industry, stockCode, ranking, loading, error, onSelectStock }: { industry: IndustryConfig; stockCode: string; ranking: IndustryRankingResponse | null; loading: boolean; error: string; onSelectStock: (code: string) => void }) {
   const metricValue = (row: IndustryRankingResponse["results"][number], key: string) => row.key_metrics.find((metric) => metric.key === key)?.value ?? "—";
   return (
-    <section className="consumer-page">
+    <section className="consumer-page consumer-ranking">
       <header className="consumer-page-head"><div><span className="eyebrow">POINT-IN-TIME PEER RANKING</span><h1>优质消费公司筛选</h1><p>使用估值日前已披露财报、实际分红、点时估值和价格风险自动排名；不读取回测结果。</p></div><span>{ranking ? `${ranking.result_count} 家 · ${ranking.valuation_date}` : "自动计算中"}</span></header>
       {loading && !ranking && <div className="industry-ranking-state"><b>正在计算消费同行排名</b><span>逐家公司对齐财报、现金流和估值分位…</span></div>}
       {error && !ranking && <div className="industry-ranking-state error"><b>同行排名暂不可用</b><span>{error}</span></div>}

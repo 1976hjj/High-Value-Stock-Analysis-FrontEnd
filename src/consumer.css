@@ -108,6 +108,24 @@
 .consumer-ranking-row.automated { grid-template-columns:1.12fr .95fr .72fr .78fr .78fr .7fr 1fr .45fr; }
 .consumer-ranking-row button { padding:6px 9px; border:0; border-radius:8px; background:var(--button-bg); color:var(--button-fg); font-size:9px; }
 
+/* Keep ranking typography as readable as the telecom peer table. */
+.consumer-ranking .consumer-page-head h1 { margin:6px 0; font-size:29px; line-height:1.3; }
+.consumer-ranking .consumer-page-head p { max-width:790px; margin:0; font-size:13px; line-height:1.6; }
+.consumer-ranking .consumer-page-head > span { padding:8px 12px; font-size:12px; }
+.consumer-ranking-row.header span { font-size:12px; }
+.consumer-ranking-row > span { padding:13px 10px; font-size:13px; line-height:1.35; }
+.consumer-ranking-row > span b { line-height:1.35; }
+.consumer-ranking-row > span small {
+  margin-top:3px;
+  overflow:visible;
+  font-size:11px;
+  line-height:1.45;
+  text-overflow:clip;
+  white-space:normal;
+}
+.consumer-ranking-row > span strong { font-size:20px; }
+.consumer-ranking-row button { padding:7px 9px; font-size:12px; }
+
 .consumer-note,
 .consumer-coverage { margin-top:14px; padding:12px 14px; border-radius:11px; background:color-mix(in srgb,var(--lavender) 16%,rgba(255,255,255,.38)); color:var(--muted); font-size:9px; line-height:1.65; }
 

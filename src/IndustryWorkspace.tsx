@@ -17,6 +17,7 @@ import {
   type IndustryId,
 } from "./industryConfig";
 import type { IndustryAnalysisResult, IndustryRankingResponse, StrategyBacktestQuery } from "./types";
+import { industryValuationPercentiles } from "./industryValuation";
 
 type IndustryPage = "overview" | "reversion" | "details" | "scenarios" | "methods";
 
@@ -106,7 +107,7 @@ function IndustryHero({
           {quote
             ? `${quote.quote_date} ${quote.quote_time} · ${quote.source}`
             : analysis
-              ? `估值收盘 ${analysis.market_date} · ${analysis.valuation_metric.toUpperCase()} 分位 ${(analysis.valuation_percentile * 100).toFixed(1)}%`
+              ? `估值收盘 ${analysis.market_date} · ${industryValuationPercentiles(analysis)}`
               : quoteError || `估值观察日 ${valuationDate}`}
         </small>
       </div>

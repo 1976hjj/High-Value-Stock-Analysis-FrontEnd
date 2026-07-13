@@ -189,6 +189,8 @@ export interface IndustryAnalysisResult {
   daily_change_pct: number | null;
   current_pb: number | null;
   current_pe: number | null;
+  pb_percentile_5y?: number | null;
+  pe_percentile_5y?: number | null;
   valuation_metric: "pb" | "pe";
   valuation_percentile: number;
   scores: {
@@ -336,6 +338,25 @@ export interface BacktestHolding {
   position_value?: number;
   cost_basis?: number;
   profit_return?: number;
+  dividend_safety_score?: number | null;
+  stable_growth_score?: number | null;
+  quality_score?: number | null;
+  valuation_percentile?: number | null;
+  reversion_potential?: number | null;
+}
+
+export interface BacktestHoldingPriceSeries {
+  stock_code: string;
+  stock_name: string;
+  entry_date: string;
+  price_curve: Array<{ date: string; value: number }>;
+  start_price: number;
+  entry_price: number;
+  current_price: number;
+  high_price: number;
+  low_price: number;
+  price_return: number;
+  estimated_shares: number;
 }
 
 export interface StrategyBacktestResult {
@@ -367,6 +388,13 @@ export interface StrategyBacktestResult {
     date: string;
     holdings: BacktestHolding[];
   }>;
+  selection_snapshots?: Array<{
+    date: string;
+    holdings: BacktestHolding[];
+    candidate_count: number;
+    cash_weight: number;
+  }>;
+  holding_price_series?: BacktestHoldingPriceSeries[];
 }
 
 export interface StrategyBacktestResponse {

@@ -2216,6 +2216,9 @@ type HoldingContribution = {
   profit: number;
 };
 
+type HoldingSnapshot = NonNullable<StrategyBacktestResult["holding_snapshots"]>[number];
+type HoldingPriceSeries = NonNullable<StrategyBacktestResult["holding_price_series"]>[number];
+
 const daysBetween = (start: string, end: string) => {
   const startTime = new Date(start).getTime();
   const endTime = new Date(end).getTime();
@@ -2237,7 +2240,7 @@ const pointValueAtOrBefore = (
 };
 
 const snapshotAtOrBefore = (strategy: StrategyBacktestResult, date: string) => {
-  let active = strategy.holding_snapshots?.[0] ?? null;
+  let active: HoldingSnapshot | null = null;
   for (const snapshot of strategy.holding_snapshots ?? []) {
     if (snapshot.date > date) break;
     active = snapshot;
@@ -2620,6 +2623,116 @@ function BacktestLineChart({
   );
 }
 
+function HoldingPriceChart({
+  series,
+  strategy,
+}: {
+  series: HoldingPriceSeries;
+  strategy: StrategyBacktestResult;
+}) {
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  const points = series.price_curve;
+  if (!points.length) return null;
+  const width = 620;
+  const height = 148;
+  const chartLeft = 42;
+  const chartRight = width - 12;
+  const chartTop = 15;
+  const chartBottom = 113;
+  const values = points.map((point) => point.value);
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const padding = Math.max((rawMax - rawMin) * 0.12, rawMax * 0.015, 0.01);
+  const min = rawMin - padding;
+  const max = rawMax + padding;
+  const x = (index: number) => chartLeft + (index / Math.max(points.length - 1, 1)) * (chartRight - chartLeft);
+  const y = (value: number) => chartBottom - ((value - min) / Math.max(max - min, .01)) * (chartBottom - chartTop);
+  const path = points
+    .map((point, index) => `${index === 0 ? "M" : "L"}${x(index).toFixed(2)},${y(point.value).toFixed(2)}`)
+    .join(" ");
+  const entryIndex = points.findIndex((point) => point.date >= series.entry_date);
+  const entryPoint = points[Math.max(entryIndex, 0)];
+  const activeIndex = hoverIndex !== null && points[hoverIndex] ? hoverIndex : null;
+  const activePoint = activeIndex !== null ? points[activeIndex] : null;
+  const activeHolding = activePoint
+    ? snapshotAtOrBefore(strategy, activePoint.date)?.holdings.find((holding) => holding.stock_code === series.stock_code) ?? null
+    : null;
+  const activePriceReturn = activePoint && series.entry_price > 0
+    ? activePoint.value / series.entry_price - 1
+    : null;
+  const activeShares = activeHolding && activePoint && activePoint.value > 0
+    ? (activeHolding.position_value ?? 0) / activePoint.value
+    : null;
+  const activeX = activeIndex !== null ? x(activeIndex) : 0;
+  const activeY = activePoint ? y(activePoint.value) : 0;
+  const tooltipWidth = 172;
+  const tooltipX = Math.max(
+    0,
+    Math.min(width - tooltipWidth, activeX + tooltipWidth + 8 <= width ? activeX + 8 : activeX - tooltipWidth - 8),
+  );
+  const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const chartX = ((event.clientX - rect.left) / rect.width) * width;
+    const ratio = Math.min(Math.max((chartX - chartLeft) / (chartRight - chartLeft), 0), 1);
+    setHoverIndex(Math.round(ratio * Math.max(points.length - 1, 0)));
+  };
+
+  return (
+    <svg
+      className={`holding-price-chart${activePoint ? " tooltip-active" : ""}`}
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label={`${series.stock_name}回测区间价格走势`}
+      tabIndex={0}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={() => setHoverIndex(null)}
+      onFocus={() => setHoverIndex(points.length - 1)}
+      onBlur={() => setHoverIndex(null)}
+    >
+      {[max - padding, (max + min) / 2, min + padding].map((value, index) => (
+        <g key={index}>
+          <line x1={chartLeft} y1={y(value)} x2={chartRight} y2={y(value)} className="grid" />
+          <text x={chartLeft - 7} y={y(value) + 3} textAnchor="end">{money(value)}</text>
+        </g>
+      ))}
+      <path className="price-path" d={path} />
+      {entryPoint && (
+        <g className="price-entry">
+          <line x1={x(Math.max(entryIndex, 0))} y1={chartTop} x2={x(Math.max(entryIndex, 0))} y2={chartBottom} />
+          <circle cx={x(Math.max(entryIndex, 0))} cy={y(entryPoint.value)} r="3.8" />
+          <text x={x(Math.max(entryIndex, 0))} y={chartTop + 8} textAnchor="middle">建仓</text>
+        </g>
+      )}
+      <circle className="price-current" cx={x(points.length - 1)} cy={y(points.at(-1)?.value ?? 0)} r="4" />
+      {activePoint && activePriceReturn !== null && (
+        <g className="holding-price-crosshair">
+          <line x1={activeX} y1={chartTop} x2={activeX} y2={chartBottom} />
+          <line x1={chartLeft} y1={activeY} x2={chartRight} y2={activeY} />
+          <circle cx={activeX} cy={activeY} r="4" />
+          <g className="holding-price-tooltip" transform={`translate(${tooltipX},${chartTop})`}>
+            <rect width={tooltipWidth} height={activeHolding ? 92 : 64} rx="8" />
+            <text className="date" x="9" y="14">{activePoint.date}</text>
+            <text x="9" y="29">价格 <tspan className="value" x={tooltipWidth - 9} textAnchor="end">{money(activePoint.value)}</tspan></text>
+            <text x="9" y="42">相对建仓 <tspan className={activePriceReturn >= 0 ? "value up" : "value down"} x={tooltipWidth - 9} textAnchor="end">{pct(activePriceReturn)}</tspan></text>
+            {activeHolding ? (
+              <>
+                <text x="9" y="57">持仓 / 浮盈 <tspan className="value" x={tooltipWidth - 9} textAnchor="end">{activeHolding.holding_days ?? 0}天 / {capitalMoney(activeHolding.profit ?? 0)}</tspan></text>
+                <text x="9" y="70">市值 / 成本 <tspan className="value" x={tooltipWidth - 9} textAnchor="end">{capitalMoney(activeHolding.position_value ?? 0)} / {capitalMoney(activeHolding.cost_basis ?? 0)}</tspan></text>
+                <text x="9" y="83">折算股数 <tspan className="value" x={tooltipWidth - 9} textAnchor="end">{activeShares?.toFixed(2) ?? "—"} 股</tspan></text>
+              </>
+            ) : (
+              <text className="not-held" x="9" y="57">当日尚未持有该股票</text>
+            )}
+          </g>
+        </g>
+      )}
+      <rect className="holding-price-hit-zone" x={chartLeft} y={chartTop} width={chartRight - chartLeft} height={chartBottom - chartTop} />
+      <text x={chartLeft} y="139">{points[0].date}</text>
+      <text x={chartRight} y="139" textAnchor="end">{points.at(-1)?.date}</text>
+    </svg>
+  );
+}
+
 function BacktestPage({
   backtest,
   loading,
@@ -2649,6 +2762,7 @@ function BacktestPage({
   const [savedPresets, setSavedPresets] = useState<SavedBacktestPreset[]>(readSavedBacktestPresets);
   const [selectedSavedPresetId, setSelectedSavedPresetId] = useState("");
   const [highlightedHoldingCode, setHighlightedHoldingCode] = useState("");
+  const [selectedReviewYear, setSelectedReviewYear] = useState<number | null>(null);
   const [chartHeight, setChartHeight] = useState(() => {
     const saved = Number(localStorage.getItem("bank-backtest-chart-height"));
     return Number.isFinite(saved) && saved >= 160 && saved <= 260 ? saved : 190;
@@ -2657,6 +2771,15 @@ function BacktestPage({
   const activeHighlightedHolding = active?.current_holdings.find((item) => item.stock_code === highlightedHoldingCode)
     ?? active?.current_holdings[0]
     ?? null;
+  const activeHoldingPriceSeries = activeHighlightedHolding
+    ? active?.holding_price_series?.find((item) => item.stock_code === activeHighlightedHolding.stock_code) ?? null
+    : null;
+  const reviewYear = selectedReviewYear ?? active?.yearly_returns.at(-1)?.year ?? null;
+  const annualSelectionSnapshot = reviewYear === null
+    ? null
+    : (active?.selection_snapshots ?? [])
+        .filter((snapshot) => Number(snapshot.date.slice(0, 4)) === reviewYear)
+        .at(-1) ?? null;
   const weightTotal = backtestWeightTotal(query);
   const updateQuery = <K extends keyof StrategyBacktestQuery,>(key: K, value: StrategyBacktestQuery[K]) => {
     setOptimizationError("");
@@ -2814,6 +2937,16 @@ function BacktestPage({
       setHighlightedHoldingCode(active.current_holdings[0].stock_code);
     }
   }, [active?.strategy_id, active?.current_holdings.map((item) => item.stock_code).join("|"), highlightedHoldingCode]);
+  useEffect(() => {
+    const years = active?.yearly_returns.map((item) => item.year) ?? [];
+    if (!years.length) {
+      setSelectedReviewYear(null);
+      return;
+    }
+    if (selectedReviewYear === null || !years.includes(selectedReviewYear)) {
+      setSelectedReviewYear(years.at(-1) ?? null);
+    }
+  }, [active?.strategy_id, active?.yearly_returns.map((item) => item.year).join("|"), selectedReviewYear]);
 
   return (
     <div className="backtest-page fade-in">
@@ -3115,11 +3248,51 @@ function BacktestPage({
                   </div>
                   <div className="yearly-grid">
                     {active.yearly_returns.map((item) => (
-                      <span className={item.return_rate >= 0 ? "up" : "down"} key={item.year}>
+                      <button
+                        type="button"
+                        className={`${item.return_rate >= 0 ? "up" : "down"}${reviewYear === item.year ? " active" : ""}`}
+                        key={item.year}
+                        onClick={() => setSelectedReviewYear(item.year)}
+                        aria-pressed={reviewYear === item.year}
+                      >
                         {item.year}<b>{pct(item.return_rate)}</b>
-                      </span>
+                      </button>
                     ))}
                   </div>
+                  {reviewYear !== null && (
+                    <section className="year-selection-audit" aria-live="polite">
+                      <header>
+                        <div>
+                          <span>年度历史选股审计</span>
+                          <h3>{reviewYear} 年{annualSelectionSnapshot ? ` · 最后调仓 ${annualSelectionSnapshot.date}` : ""}</h3>
+                        </div>
+                        {annualSelectionSnapshot && <b>{annualSelectionSnapshot.holdings.length} 只</b>}
+                      </header>
+                      {annualSelectionSnapshot ? (
+                        <>
+                          <div className="selection-audit-summary">
+                            <span>通过候选 <b>{annualSelectionSnapshot.candidate_count}</b></span>
+                            <span>目标持仓 <b>{annualSelectionSnapshot.holdings.length}</b></span>
+                            <span>现金权重 <b>{purePct(annualSelectionSnapshot.cash_weight)}</b></span>
+                          </div>
+                          <div className="selection-audit-table">
+                            <div className="selection-audit-head"><span>股票 / 权重</span><span>综合 / 风险</span><span>股息 / 安全</span><span>增长 / 质量</span><span>估值 / 回归</span></div>
+                            {annualSelectionSnapshot.holdings.map((holding) => (
+                              <div className="selection-audit-row" key={`${annualSelectionSnapshot.date}-${holding.stock_code}`}>
+                                <span><b>{holding.stock_name}</b><small>{holding.stock_code} · {purePct(holding.weight)}</small></span>
+                                <span><b>{holding.score.toFixed(1)}</b><small>风险 {holding.risk_score.toFixed(1)}</small></span>
+                                <span><b>{holding.dividend_yield === null ? "—" : purePct(holding.dividend_yield)}</b><small>安全 {holding.dividend_safety_score?.toFixed(1) ?? "—"}</small></span>
+                                <span><b>{holding.stable_growth_score?.toFixed(1) ?? "—"}</b><small>质量 {holding.quality_score?.toFixed(1) ?? "—"}</small></span>
+                                <span><b>{holding.valuation_percentile === null || holding.valuation_percentile === undefined ? "—" : purePct(holding.valuation_percentile)}</b><small>回归 {holding.reversion_potential === null || holding.reversion_potential === undefined ? "—" : purePct(holding.reversion_potential)}</small></span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <p>该年份没有可用的历史调仓快照；请重新运行回测以生成审计数据。</p>
+                      )}
+                    </section>
+                  )}
                 </div>
                 <div className="card holdings-card">
                   <div className="section-heading">
@@ -3151,6 +3324,37 @@ function BacktestPage({
                       );
                     })}
                   </div>
+                  {activeHighlightedHolding && (
+                    <section className="holding-detail-panel" aria-live="polite">
+                      <header>
+                        <div>
+                          <span>已选持仓 · 回测价格路径</span>
+                          <h3>{activeHighlightedHolding.stock_name} <small>{activeHighlightedHolding.stock_code}</small></h3>
+                        </div>
+                        <b className={(activeHighlightedHolding.profit ?? 0) >= 0 ? "up" : "down"}>
+                          {capitalMoney(activeHighlightedHolding.profit ?? 0)}
+                        </b>
+                      </header>
+                      {activeHoldingPriceSeries ? (
+                        <>
+                          <HoldingPriceChart series={activeHoldingPriceSeries} strategy={active} />
+                          <div className="holding-detail-facts">
+                            <span>回测区间 <b>{backtest.start_date} — {backtest.end_date}</b></span>
+                            <span>建仓价格 <b>{money(activeHoldingPriceSeries.entry_price)}</b></span>
+                            <span>当前价格 <b>{money(activeHoldingPriceSeries.current_price)}</b></span>
+                            <span>价格涨跌 <b className={activeHoldingPriceSeries.price_return >= 0 ? "up" : "down"}>{pct(activeHoldingPriceSeries.price_return)}</b></span>
+                            <span>模拟折算股数 <b>{activeHoldingPriceSeries.estimated_shares.toFixed(2)} 股</b></span>
+                            <span>市值 / 成本 <b>{capitalMoney(activeHighlightedHolding.position_value ?? 0)} / {capitalMoney(activeHighlightedHolding.cost_basis ?? 0)}</b></span>
+                            <span>持仓总收益 <b className={(activeHighlightedHolding.profit_return ?? 0) >= 0 ? "up" : "down"}>{purePct(activeHighlightedHolding.profit_return ?? 0)}</b></span>
+                            <span>区间高低 <b>{money(activeHoldingPriceSeries.high_price)} / {money(activeHoldingPriceSeries.low_price)}</b></span>
+                          </div>
+                          <p>价格路径使用本次回测区间的同源日线；持仓总收益已包含策略口径下的分红与调仓成本，因此不等同于单纯价格涨跌。</p>
+                        </>
+                      ) : (
+                        <p>该持仓暂无完整的回测价格路径。</p>
+                      )}
+                    </section>
+                  )}
                 </div>
               </section>
               <p className="industry-note">{backtest.data_note}</p>

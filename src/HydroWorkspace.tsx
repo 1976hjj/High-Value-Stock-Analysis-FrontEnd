@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { LiveQuote } from "./api";
 import { findIndustryStock, type IndustryConfig } from "./industryConfig";
 import type { IndustryAnalysisResult, IndustryRankingResponse } from "./types";
+import { industryValuationPercentiles } from "./industryValuation";
 
 type HydroPage = "overview" | "reversion" | "details" | "scenarios" | "methods";
 
@@ -134,7 +135,7 @@ function HydroHeader({ industry, stockCode, quote, analysis, valuationDate }: {
         <span>{quote ? "实时价格" : "估值收盘"}</span>
         <b>{money(price)}</b>
         <small>{quote ? `${quote.quote_date} ${quote.quote_time}` : analysis?.market_date ?? valuationDate}</small>
-        <em>{analysis ? `${analysis.valuation_metric.toUpperCase()} 五年分位 ${pct(analysis.valuation_percentile)}` : "分析后显示估值分位"}</em>
+        <em>{industryValuationPercentiles(analysis)}</em>
       </div>
       <div className="hydro-score-card">
         <span>水电研究框架分</span>

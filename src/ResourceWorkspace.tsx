@@ -1,6 +1,7 @@
 import type { LiveQuote } from "./api";
 import { findIndustryStock, type IndustryConfig } from "./industryConfig";
 import type { IndustryAnalysisResult, IndustryRankingResponse, IndustryPriceScenario } from "./types";
+import { industryValuationPercentiles } from "./industryValuation";
 
 type ResourcePage = "overview" | "reversion" | "details" | "scenarios" | "methods";
 
@@ -35,7 +36,7 @@ function ResourceHeader({ industry, stockCode, quote, analysis, valuationDate }:
   const score = Math.round(analysis?.scores.overall ?? stock.qualityScore * .38 + stock.incomeScore * .30 + stock.defenseScore * .32);
   return <section className="resource-hero">
     <div><span className="eyebrow">RESOURCE CYCLE CONTROL ROOM · {stock.code}</span><h1><i>◆</i>{stock.name}</h1><p>{profile.commodity} · {profile.structure}</p><footer><span>{profile.hedgeRole}</span><span>周期敏感度 {profile.cycleSensitivity.toFixed(2)}</span><span>{profile.costMoat}</span></footer></div>
-    <div className="resource-market"><span>{quote ? "实时价格" : "估值收盘"}</span><b>{money(quote?.price ?? analysis?.current_price)}</b><small>{quote ? `${quote.quote_date} ${quote.quote_time}` : analysis?.market_date ?? valuationDate}</small><em>{analysis ? `PB 五年分位 ${pct(analysis.valuation_percentile)}` : "分析后显示周期估值"}</em></div>
+    <div className="resource-market"><span>{quote ? "实时价格" : "估值收盘"}</span><b>{money(quote?.price ?? analysis?.current_price)}</b><small>{quote ? `${quote.quote_date} ${quote.quote_time}` : analysis?.market_date ?? valuationDate}</small><em>{industryValuationPercentiles(analysis)}</em></div>
     <div className="resource-score"><span>资源周期质量分</span><b>{score}</b><strong>{score >= 82 ? "低成本核心池" : score >= 72 ? "周期观察池" : "高波动卫星仓"}</strong><small>成本与现金优先，不追逐峰值利润</small></div>
   </section>;
 }
