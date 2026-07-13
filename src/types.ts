@@ -335,6 +335,8 @@ export interface BacktestHolding {
   entry_date?: string | null;
   holding_days?: number;
   profit?: number;
+  price_profit?: number;
+  dividend_profit?: number;
   position_value?: number;
   cost_basis?: number;
   profit_return?: number;

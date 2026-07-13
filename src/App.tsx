@@ -2710,15 +2710,16 @@ function HoldingPriceChart({
           <line x1={chartLeft} y1={activeY} x2={chartRight} y2={activeY} />
           <circle cx={activeX} cy={activeY} r="4" />
           <g className="holding-price-tooltip" transform={`translate(${tooltipX},${chartTop})`}>
-            <rect width={tooltipWidth} height={activeHolding ? 92 : 64} rx="8" />
+            <rect width={tooltipWidth} height={activeHolding ? 105 : 64} rx="8" />
             <text className="date" x="9" y="14">{activePoint.date}</text>
             <text x="9" y="29">价格 <tspan className="value" x={tooltipWidth - 9} textAnchor="end">{money(activePoint.value)}</tspan></text>
             <text x="9" y="42">相对建仓 <tspan className={activePriceReturn >= 0 ? "value up" : "value down"} x={tooltipWidth - 9} textAnchor="end">{pct(activePriceReturn)}</tspan></text>
             {activeHolding ? (
               <>
                 <text x="9" y="57">持仓 / 浮盈 <tspan className="value" x={tooltipWidth - 9} textAnchor="end">{activeHolding.holding_days ?? 0}天 / {capitalMoney(activeHolding.profit ?? 0)}</tspan></text>
-                <text x="9" y="70">市值 / 成本 <tspan className="value" x={tooltipWidth - 9} textAnchor="end">{capitalMoney(activeHolding.position_value ?? 0)} / {capitalMoney(activeHolding.cost_basis ?? 0)}</tspan></text>
-                <text x="9" y="83">折算股数 <tspan className="value" x={tooltipWidth - 9} textAnchor="end">{activeShares?.toFixed(2) ?? "—"} 股</tspan></text>
+                <text x="9" y="70">价格 / 分红 <tspan className="value" x={tooltipWidth - 9} textAnchor="end">{capitalMoney(activeHolding.price_profit ?? 0)} / {capitalMoney(activeHolding.dividend_profit ?? 0)}</tspan></text>
+                <text x="9" y="83">市值 / 成本 <tspan className="value" x={tooltipWidth - 9} textAnchor="end">{capitalMoney(activeHolding.position_value ?? 0)} / {capitalMoney(activeHolding.cost_basis ?? 0)}</tspan></text>
+                <text x="9" y="96">折算股数 <tspan className="value" x={tooltipWidth - 9} textAnchor="end">{activeShares?.toFixed(2) ?? "—"} 股</tspan></text>
               </>
             ) : (
               <text className="not-held" x="9" y="57">当日尚未持有该股票</text>
@@ -3345,10 +3346,12 @@ function BacktestPage({
                             <span>价格涨跌 <b className={activeHoldingPriceSeries.price_return >= 0 ? "up" : "down"}>{pct(activeHoldingPriceSeries.price_return)}</b></span>
                             <span>模拟折算股数 <b>{activeHoldingPriceSeries.estimated_shares.toFixed(2)} 股</b></span>
                             <span>市值 / 成本 <b>{capitalMoney(activeHighlightedHolding.position_value ?? 0)} / {capitalMoney(activeHighlightedHolding.cost_basis ?? 0)}</b></span>
+                            <span>价格盈亏 <b className={(activeHighlightedHolding.price_profit ?? 0) >= 0 ? "up" : "down"}>{capitalMoney(activeHighlightedHolding.price_profit ?? 0)}</b></span>
+                            <span>分红贡献 <b className={(activeHighlightedHolding.dividend_profit ?? 0) >= 0 ? "up" : "down"}>{capitalMoney(activeHighlightedHolding.dividend_profit ?? 0)}</b></span>
                             <span>持仓总收益 <b className={(activeHighlightedHolding.profit_return ?? 0) >= 0 ? "up" : "down"}>{purePct(activeHighlightedHolding.profit_return ?? 0)}</b></span>
                             <span>区间高低 <b>{money(activeHoldingPriceSeries.high_price)} / {money(activeHoldingPriceSeries.low_price)}</b></span>
                           </div>
-                          <p>价格路径使用本次回测区间的同源日线；持仓总收益已包含策略口径下的分红与调仓成本，因此不等同于单纯价格涨跌。</p>
+                          <p>持仓浮盈 = 价格盈亏 + 已实现分红贡献；除息日的价格变动与现金分红分别归因。交易成本在策略总资产的“交易成本”指标中单列，不任意分摊到单只股票。</p>
                         </>
                       ) : (
                         <p>该持仓暂无完整的回测价格路径。</p>
