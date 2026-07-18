@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { LiveQuote } from "./api";
 import { findIndustryStock, type IndustryConfig } from "./industryConfig";
+import { StockLogo } from "./StockLogo";
 import type { IndustryAnalysisResult, IndustryRankingResponse } from "./types";
 import { industryValuationPercentiles } from "./industryValuation";
 
@@ -127,7 +128,7 @@ function HydroHeader({ industry, stockCode, quote, analysis, valuationDate }: {
     <section className="hydro-hero">
       <div className="hydro-identity">
         <span className="eyebrow">HYDRO ASSET CONTROL ROOM · {stock.code}</span>
-        <h1><i>≈</i>{stock.name}</h1>
+        <h1><StockLogo stockCode={stock.code} stockName={stock.name} className="stock-logo-hero" />{stock.name}</h1>
         <p>{profile.basin} · {profile.archetype} · {profile.assetMix}</p>
         <div><span>水电纯度 {profile.purity}</span><span>{profile.regulation}</span><span>{stock.role}</span></div>
       </div>
@@ -234,7 +235,7 @@ function HydroRanking({ industry, stockCode, ranking, loading, error, onSelectSt
           const profile = profileFor(row.stock_code);
           return (
             <div className={`hydro-ranking-row automated ${row.stock_code === stockCode ? "active" : ""}`} role="row" key={row.stock_code}>
-              <span><b>#{row.rank} {row.stock_name}</b><small>{row.stock_code} · 财报 {row.report_date ?? "—"}</small></span>
+              <span><b className="stock-name-with-logo"><StockLogo stockCode={row.stock_code} stockName={row.stock_name} className="stock-logo-ranking" /><span>#{row.rank} {row.stock_name}</span></b><small>{row.stock_code} · 财报 {row.report_date ?? "—"}</small></span>
               <span><b>{profile.basin}</b><small>{profile.archetype}</small></span>
               <span><b>{metricValue(row, "profit_growth_proxy")}</b><small>收入代理 {metricValue(row, "revenue_growth_proxy")}</small></span>
               <span><b>{metricValue(row, "cfo_to_np")}</b><small>负债率 {metricValue(row, "liability_ratio")}</small></span>

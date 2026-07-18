@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { LiveQuote } from "./api";
 import { findIndustryStock, type IndustryConfig } from "./industryConfig";
+import { StockLogo } from "./StockLogo";
 import type { IndustryAnalysisResult, IndustryRankingResponse } from "./types";
 import { industryValuationPercentiles } from "./industryValuation";
 
@@ -122,7 +123,7 @@ function ConsumerHeader({ industry, stockCode, quote, analysis, valuationDate }:
     <section className="consumer-hero">
       <div className="consumer-identity">
         <span className="eyebrow">CONSUMER BRAND CONTROL ROOM · {stock.code}</span>
-        <h1><i>◍</i>{stock.name}</h1>
+        <h1><StockLogo stockCode={stock.code} stockName={stock.name} className="stock-logo-hero" />{stock.name}</h1>
         <p>{profile.category} · {profile.demandType}消费 · {profile.businessModel}</p>
         <div><span>复购 {profile.repeat}</span><span>定价权 {profile.pricingPower}/100</span><span>{profile.channel}</span></div>
       </div>
@@ -211,7 +212,7 @@ function ConsumerRanking({ industry, stockCode, ranking, loading, error, onSelec
           const stock = findIndustryStock(industry, row.stock_code);
           const profile = profileFor(row.stock_code);
           return <div className={`consumer-ranking-row automated ${row.stock_code === stockCode ? "active" : ""}`} role="row" key={row.stock_code}>
-            <span><b>#{row.rank} {row.stock_name}</b><small>{row.stock_code} · 财报 {row.report_date ?? "—"}</small></span>
+            <span><b className="stock-name-with-logo"><StockLogo stockCode={row.stock_code} stockName={row.stock_name} className="stock-logo-ranking" /><span>#{row.rank} {row.stock_name}</span></b><small>{row.stock_code} · 财报 {row.report_date ?? "—"}</small></span>
             <span><b>{profile.category}</b><small>{profile.demandType} · 敏感度 {profile.demandSensitivity.toFixed(2)}</small></span>
             <span><b>{metricValue(row, "revenue_growth")}</b><small>利润 {metricValue(row, "profit_growth")}</small></span>
             <span><b>{metricValue(row, "cfo_to_np")}</b><small>年化 ROE {metricValue(row, "roe_annualized")}</small></span>

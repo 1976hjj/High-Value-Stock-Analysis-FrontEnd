@@ -28,6 +28,7 @@ import {
 import type { LiveQuote } from "./api";
 import type {
   BacktestStrategyId,
+  BacktestProfitContributionPeriod,
   BankMeanReversionOverview,
   BankMeanReversionRow,
   IndustryBenchmark,
@@ -1727,7 +1728,7 @@ function EmptyState() {
   );
 }
 
-function StockSearchBox({
+export function StockSearchBox({
   value,
   selectedCode,
   options,
@@ -1743,6 +1744,7 @@ function StockSearchBox({
   onSelect: (code: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const keyword = normalizeBankSearchText(value);
   const matches = useMemo(() => {
     if (!keyword) return options.slice(0, 10);
@@ -1762,8 +1764,20 @@ function StockSearchBox({
     setOpen(false);
   };
   return (
-    <div className="bank-search">
+    <div
+      className="bank-search"
+      onPointerDown={(event) => {
+        const target = event.target as HTMLElement;
+        if (target.closest("button") || target.closest(".bank-search-menu")) return;
+        setOpen(true);
+        if (target !== inputRef.current) {
+          event.preventDefault();
+          inputRef.current?.focus();
+        }
+      }}
+    >
       <input
+        ref={inputRef}
         value={value}
         onChange={(event) => {
           const nextValue = event.target.value;
@@ -1775,6 +1789,7 @@ function StockSearchBox({
           }
         }}
         onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
         onBlur={() => window.setTimeout(() => setOpen(false), 120)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && open && matches.length > 0) {
@@ -1787,13 +1802,16 @@ function StockSearchBox({
         }}
         placeholder={`输入代码或${industryLabel}名称`}
         aria-label={`搜索${industryLabel}股票`}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        role="combobox"
         autoComplete="off"
       />
       <button type="button" aria-label={`展开${industryLabel}股票列表`} onClick={() => setOpen((current) => !current)}>
         ▾
       </button>
       {open && (
-        <div className="bank-search-menu">
+        <div className="bank-search-menu" role="listbox" aria-label={`${industryLabel}股票列表`}>
           {matches.length > 0 ? (
             matches.map(([stockCode, name]) => (
               <button
@@ -1802,6 +1820,8 @@ function StockSearchBox({
                 key={stockCode}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => choose(stockCode)}
+                role="option"
+                aria-selected={stockCode === selectedCode}
               >
                 <span>{stockCode}</span>
                 <b>{name}</b>
@@ -2734,6 +2754,49 @@ function HoldingPriceChart({
   );
 }
 
+export function ProfitContributionTable({
+  period,
+  title,
+  compact = false,
+}: {
+  period: BacktestProfitContributionPeriod;
+  title: string;
+  compact?: boolean;
+}) {
+  return (
+    <section className={`profit-contribution${compact ? " compact" : ""}`}>
+      <header>
+        <div>
+          <span>STOCK PROFIT ATTRIBUTION</span>
+          <h3>{title}</h3>
+          <small>{period.start_date} — {period.end_date} · 共涉及 {period.stocks.length} 只股票</small>
+        </div>
+        <b className={period.net_profit >= 0 ? "up" : "down"}>{capitalMoney(period.net_profit)}</b>
+      </header>
+      <div className="profit-contribution-summary">
+        <span>区间收益<b className={period.return_rate >= 0 ? "up" : "down"}>{pct(period.return_rate)}</b></span>
+        <span>股票净贡献<b>{capitalMoney(period.stock_net_profit)}</b></span>
+        <span>现金收益<b>{capitalMoney(period.cash_profit)}</b></span>
+        <span>对账差额<b className={Math.abs(period.reconciliation_error) <= 0.01 ? "up" : "down"}>{signedMoney(period.reconciliation_error)}</b></span>
+      </div>
+      <div className="profit-contribution-table">
+        <div className="profit-contribution-head">
+          <span>股票</span><span>净利润 / 贡献度</span><span>价格 / 分红</span><span>交易成本</span>
+        </div>
+        {period.stocks.map((stock) => (
+          <div className="profit-contribution-row" key={`${period.period_type}-${period.year ?? "all"}-${stock.stock_code}`}>
+            <span><b>{stock.stock_name}</b><small>{stock.stock_code}</small></span>
+            <span><b className={stock.net_profit >= 0 ? "up" : "down"}>{capitalMoney(stock.net_profit)}</b><small>收益贡献 {pct(stock.return_contribution)}</small></span>
+            <span><b>{capitalMoney(stock.price_profit)}</b><small>分红 {capitalMoney(stock.dividend_profit)}</small></span>
+            <span><b>{capitalMoney(stock.transaction_cost)}</b><small>已从净利润扣除</small></span>
+          </div>
+        ))}
+      </div>
+      <p>净利润 = 价格盈亏 + 分红贡献 − 交易成本；收益贡献度 = 该股净利润 ÷ 本期组合期初净值。</p>
+    </section>
+  );
+}
+
 function BacktestPage({
   backtest,
   loading,
@@ -2781,6 +2844,10 @@ function BacktestPage({
     : (active?.selection_snapshots ?? [])
         .filter((snapshot) => Number(snapshot.date.slice(0, 4)) === reviewYear)
         .at(-1) ?? null;
+  const annualProfitContribution = reviewYear === null
+    ? null
+    : active?.yearly_profit_contributions?.find((period) => period.year === reviewYear) ?? null;
+  const totalProfitContribution = active?.total_profit_contribution ?? null;
   const weightTotal = backtestWeightTotal(query);
   const updateQuery = <K extends keyof StrategyBacktestQuery,>(key: K, value: StrategyBacktestQuery[K]) => {
     setOptimizationError("");
@@ -2910,7 +2977,7 @@ function BacktestPage({
   const runLabel = query.start_date || query.end_date
     ? `${query.start_date || backtest?.start_date || "start"} 至 ${query.end_date || backtest?.end_date || "latest"}`
     : `${query.years}年 · ${BACKTEST_FREQUENCY_LABEL[query.rebalance_frequency]}`;
-  const activeStartValue = active?.equity_curve[0]?.value ?? query.initial_capital;
+  const activeStartValue = active?.total_profit_contribution?.start_value ?? query.initial_capital;
   const activeEndValue = active?.equity_curve.at(-1)?.value ?? activeStartValue;
   const activeProfit = activeEndValue - activeStartValue;
   const activeTransactionCost = active?.metrics.total_transaction_cost
@@ -3260,6 +3327,13 @@ function BacktestPage({
                       </button>
                     ))}
                   </div>
+                  {annualProfitContribution && (
+                    <ProfitContributionTable
+                      period={annualProfitContribution}
+                      title={`${reviewYear} 年股票利润贡献`}
+                      compact
+                    />
+                  )}
                   {reviewYear !== null && (
                     <section className="year-selection-audit" aria-live="polite">
                       <header>
@@ -3351,7 +3425,7 @@ function BacktestPage({
                             <span>持仓总收益 <b className={(activeHighlightedHolding.profit_return ?? 0) >= 0 ? "up" : "down"}>{purePct(activeHighlightedHolding.profit_return ?? 0)}</b></span>
                             <span>区间高低 <b>{money(activeHoldingPriceSeries.high_price)} / {money(activeHoldingPriceSeries.low_price)}</b></span>
                           </div>
-                          <p>持仓浮盈 = 价格盈亏 + 已实现分红贡献；除息日的价格变动与现金分红分别归因。交易成本在策略总资产的“交易成本”指标中单列，不任意分摊到单只股票。</p>
+                          <p>当前持仓浮盈 = 价格盈亏 + 已实现分红贡献；年度和全周期利润贡献表另按每只股票的实际买卖权重归属交易成本。</p>
                         </>
                       ) : (
                         <p>该持仓暂无完整的回测价格路径。</p>
@@ -3360,6 +3434,14 @@ function BacktestPage({
                   )}
                 </div>
               </section>
+              {totalProfitContribution && (
+                <section className="card total-profit-contribution-card">
+                  <ProfitContributionTable
+                    period={totalProfitContribution}
+                    title="回测全周期股票利润贡献"
+                  />
+                </section>
+              )}
               <p className="industry-note">{backtest.data_note}</p>
             </>
           )}
@@ -3790,6 +3872,7 @@ export default function App() {
                 <input
                   type="date"
                   value={date}
+                  onClick={(event) => event.currentTarget.showPicker?.()}
                   onChange={(e) => setDate(e.target.value)}
                 />
               </label>

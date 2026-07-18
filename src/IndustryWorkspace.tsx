@@ -8,6 +8,7 @@ import { OilGasWorkspace } from "./OilGasWorkspace";
 import { TollRoadWorkspace } from "./TollRoadWorkspace";
 import { NuclearWorkspace } from "./NuclearWorkspace";
 import { TelecomWorkspace } from "./TelecomWorkspace";
+import { StockLogo } from "./StockLogo";
 import {
   ALL_INDUSTRY_IDS,
   INDUSTRIES,
@@ -87,7 +88,7 @@ function IndustryHero({
       <div className="industry-company-main">
         <span className="eyebrow">{industry.english} · {stock.code}</span>
         <div className="industry-company-title">
-          <i aria-hidden="true">{industry.icon}</i>
+          <StockLogo stockCode={stock.code} stockName={stock.name} className="stock-logo-hero" />
           <div>
             <h1>{stock.name}</h1>
             <p>{stock.role} · {stock.moat}</p>
@@ -208,7 +209,7 @@ function IndustryRanking({
           const total = weightedScore(stock);
           return (
             <div className={`industry-ranking-row ${stock.code === stockCode ? "active" : ""}`} role="row" key={stock.code}>
-              <span className="rank-company"><i>{index + 1}</i><b>{stock.name}<small>{stock.code}</small></b></span>
+              <span className="rank-company"><i>{index + 1}</i><StockLogo stockCode={stock.code} stockName={stock.name} className="stock-logo-ranking" /><b>{stock.name}<small>{stock.code}</small></b></span>
               <span><b>{stock.role}</b><small>{stock.moat}</small></span>
               <span><b>{stock.defenseScore}</b><small>抗危机</small></span>
               <span><b>{stock.incomeScore}</b><small>股东回报</small></span>

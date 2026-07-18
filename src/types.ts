@@ -361,6 +361,32 @@ export interface BacktestHoldingPriceSeries {
   estimated_shares: number;
 }
 
+export interface BacktestStockProfitContribution {
+  stock_code: string;
+  stock_name: string;
+  industry_id?: string | null;
+  net_profit: number;
+  price_profit: number;
+  dividend_profit: number;
+  transaction_cost: number;
+  return_contribution: number;
+}
+
+export interface BacktestProfitContributionPeriod {
+  period_type: "year" | "total";
+  year?: number | null;
+  start_date: string;
+  end_date: string;
+  start_value: number;
+  end_value: number;
+  net_profit: number;
+  stock_net_profit: number;
+  cash_profit: number;
+  return_rate: number;
+  reconciliation_error: number;
+  stocks: BacktestStockProfitContribution[];
+}
+
 export interface StrategyBacktestResult {
   strategy_id: BacktestStrategyId;
   strategy_name: string;
@@ -397,6 +423,8 @@ export interface StrategyBacktestResult {
     cash_weight: number;
   }>;
   holding_price_series?: BacktestHoldingPriceSeries[];
+  yearly_profit_contributions?: BacktestProfitContributionPeriod[];
+  total_profit_contribution?: BacktestProfitContributionPeriod | null;
 }
 
 export interface StrategyBacktestResponse {
